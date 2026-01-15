@@ -1,7 +1,6 @@
-"use client";
-
 import {
   Activity,
+  Bot,
   Check,
   Copy,
   Send,
@@ -19,14 +18,18 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { AVAILABLE_MODELS } from "@/lib/models";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
+import { RoomModelsSidebar } from "./RoomModelsSidebar";
 
 interface Message {
   id: string;
   content: string;
-  profile_id: string;
+  profile_id: string | null;
   created_at: string;
+  is_ai?: boolean;
+  ai_model_id?: string;
   profiles?: {
     username: string;
     avatar_url: string;
@@ -50,13 +53,23 @@ interface Room {
   created_at: string;
 }
 
+interface RoomModel {
+  id: string;
+  model_id: string;
+  room_id: string;
+}
+
 export default function ChatRoom({ roomId }: { roomId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [roomDetails, setRoomDetails] = useState<Room | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [roomModels, setRoomModels] = useState<RoomModel[]>([]);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const supabase = createClient();
@@ -80,6 +93,14 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     if (data) setMessages(data);
   }, [roomId, supabase]);
 
+  const fetchRoomModels = useCallback(async () => {
+    const { data } = await supabase
+      .from("room_models")
+      .select("*")
+      .eq("room_id", roomId);
+    if (data) setRoomModels(data);
+  }, [roomId, supabase]);
+
   const fetchMessageSender = useCallback(
     async (messageId: string) => {
       const { data } = await supabase
@@ -99,8 +120,6 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       .eq("room_id", roomId);
 
     if (data) {
-      // Supabase join returns an array for one-to-many, even if it's 1:1 in our logic.
-      // We cast it or map it.
       // biome-ignore lint/suspicious/noExplicitAny: Supabase join typing can be tricky
       const typedData = data.map((p: any) => ({
         ...p,
@@ -111,7 +130,6 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   }, [roomId, supabase]);
 
   const fetchInviteCode = useCallback(async () => {
-    // Only works if we are admin/owner due to RLS
     const { data } = await supabase
       .from("room_invites")
       .select("code")
@@ -120,12 +138,69 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       .single();
 
     if (data) setInviteCode(data.code);
-    else {
-      // If no code exists and we are eligible, create one?
-      // For now, let's just leave it empty.
-      // Or we can add a "Generate Code" button logic here.
-    }
   }, [roomId, supabase]);
+
+  // Mention Helpers
+  const insertMention = (model: (typeof AVAILABLE_MODELS)[0]) => {
+    const lastAtPos = newMessage.lastIndexOf("@");
+    if (lastAtPos !== -1) {
+      const before = newMessage.substring(0, lastAtPos);
+      const after = newMessage.substring(
+        lastAtPos + 1 + (mentionQuery || "").length,
+      );
+      setNewMessage(`${before}@${model.name} ${after}`);
+      setMentionQuery(null);
+    }
+  };
+
+  const filteredModels =
+    mentionQuery !== null
+      ? roomModels
+          .map((rm) => AVAILABLE_MODELS.find((m) => m.id === rm.model_id))
+          .filter(
+            (m): m is (typeof AVAILABLE_MODELS)[0] =>
+              !!m &&
+              (m.name.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+                m.id.toLowerCase().includes(mentionQuery.toLowerCase())),
+          )
+      : [];
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setNewMessage(val);
+
+    const lastAtPos = val.lastIndexOf("@");
+    if (lastAtPos !== -1) {
+      const query = val.substring(lastAtPos + 1);
+      if (!query.includes(" ")) {
+        setMentionQuery(query);
+        setMentionIndex(0);
+        return;
+      }
+    }
+    setMentionQuery(null);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (mentionQuery !== null && filteredModels.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((prev) =>
+          prev > 0 ? prev - 1 : filteredModels.length - 1,
+        );
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((prev) =>
+          prev < filteredModels.length - 1 ? prev + 1 : 0,
+        );
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        insertMention(filteredModels[mentionIndex]);
+      } else if (e.key === "Escape") {
+        setMentionQuery(null);
+      }
+    }
+  };
 
   // Effects
   useEffect(() => {
@@ -135,6 +210,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     fetchMessages();
     fetchParticipants();
     fetchInviteCode();
+    fetchRoomModels();
 
     // 1. Subscribe to Messages
     const msgChannel = supabase
@@ -157,7 +233,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       )
       .subscribe();
 
-    // 2. Subscribe to Room Updates (e.g. Open/Close Toggle)
+    // 2. Subscribe to Room Updates
     const roomChannel = supabase
       .channel(`room_meta:${roomId}`)
       .on(
@@ -174,9 +250,27 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       )
       .subscribe();
 
+    // 3. Subscribe to Room Models (to keep mention list fresh)
+    const modelsChannel = supabase
+      .channel(`room_models_chat:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_models",
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          fetchRoomModels();
+        },
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(roomChannel);
+      supabase.removeChannel(modelsChannel);
     };
   }, [
     roomId,
@@ -184,30 +278,87 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     fetchMessages,
     fetchParticipants,
     fetchInviteCode,
+    fetchRoomModels,
     fetchMessageSender,
     supabase,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Need to scroll on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  }, [messages, isAiThinking]);
 
   async function handleSendMessage(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!newMessage.trim()) return;
+
+    const messageContent = newMessage; // capture for async use
+    setNewMessage(""); // Clear input immediately
 
     const { error } = await supabase.auth.getUser();
     if (error) return;
 
     const user = (await supabase.auth.getUser()).data.user;
 
+    // 1. Insert User Message
     await supabase.from("messages").insert({
       room_id: roomId,
-      content: newMessage,
+      content: messageContent,
       profile_id: user?.id,
     });
 
-    setNewMessage("");
+    // 2. Check for AI Mentions
+    // We look for patterns like "@GPT-4o" or "@Claude"
+    // Case insensitive match against available room models
+    const lowerContent = messageContent.toLowerCase();
+
+    // Find matched models in the room
+    const mentionedModels = roomModels.filter((rm) => {
+      const modelDef = AVAILABLE_MODELS.find((m) => m.id === rm.model_id);
+      if (!modelDef) return false;
+      return (
+        lowerContent.includes(`@${modelDef.name.toLowerCase()}`) ||
+        lowerContent.includes(`@${modelDef.id.toLowerCase()}`)
+      );
+    });
+
+    if (mentionedModels.length > 0) {
+      setIsAiThinking(true);
+
+      // Trigger AI for each mentioned model (could be multiple!)
+      // We'll run them in parallel
+      await Promise.all(
+        mentionedModels.map(async (rm) => {
+          try {
+            // Prepare context: last 10 messages
+            const contextMessages = messages.slice(-10).map((m) => ({
+              role: m.is_ai ? "assistant" : "user",
+              content: m.content,
+            }));
+            // Add the new message we just sent (it might not be in state yet if realtime is slow)
+            contextMessages.push({ role: "user", content: messageContent });
+
+            const response = await fetch("/api/chat", {
+              method: "POST",
+              body: JSON.stringify({
+                messages: contextMessages,
+                roomId: roomId,
+                modelId: rm.model_id,
+              }),
+            });
+
+            if (!response.ok) {
+              throw new Error("AI request failed");
+            }
+            // Server inserts response, realtime updates UI
+          } catch (err) {
+            console.error("AI Error:", err);
+          }
+        }),
+      );
+
+      setIsAiThinking(false);
+    }
   }
 
   async function toggleRoomStatus() {
@@ -255,15 +406,10 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
 
   if (!roomDetails)
     return (
-      <div className="flex h-full items-center justify-center text-zinc-500">
+      <div className="flex h-full items-center justify-center text-muted-foreground">
         Loading room...
       </div>
     );
-
-  // Check if we are owner (simple check, robust check is in DB)
-  // We can infer ownership if we can see the toggle button,
-  // but let's just check against current user ID for UI logic.
-  // (We'd need to store current user in state, doing lazy check here)
 
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
@@ -289,7 +435,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Room Controls (Ideally only visible to owner) */}
+          {/* Room Controls */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -358,66 +504,154 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
         </div>
       </div>
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
-        <div className="flex flex-col gap-4">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300"
-            >
-              <Avatar className="mt-1 h-8 w-8 border border-border">
-                <AvatarImage src={msg.profiles?.avatar_url} />
-                <AvatarFallback className="bg-secondary text-secondary-foreground text-xs">
-                  {msg.profiles?.username?.substring(0, 2).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">
-                    {msg.profiles?.username}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {new Date(msg.created_at).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
+      <div className="flex h-full min-h-0">
+        {/* Messages Area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
+            <div className="flex flex-col gap-4">
+              {messages.map((msg) => {
+                const isAi = msg.is_ai;
+                const aiModel = isAi
+                  ? AVAILABLE_MODELS.find((m) => m.id === msg.ai_model_id)
+                  : null;
+
+                return (
+                  <div
+                    key={msg.id}
+                    className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  >
+                    <Avatar
+                      className={cn(
+                        "mt-1 h-8 w-8 border border-border",
+                        isAi && "ring-1 ring-primary/50",
+                      )}
+                    >
+                      {isAi ? (
+                        <div
+                          className={cn(
+                            "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
+                            aiModel?.color,
+                          )}
+                        >
+                          <Bot className="h-4 w-4 text-white" />
+                        </div>
+                      ) : (
+                        <>
+                          <AvatarImage src={msg.profiles?.avatar_url} />
+                          <AvatarFallback className="bg-secondary text-secondary-foreground text-xs">
+                            {msg.profiles?.username
+                              ?.substring(0, 2)
+                              .toUpperCase()}
+                          </AvatarFallback>
+                        </>
+                      )}
+                    </Avatar>
+                    <div className="flex flex-col gap-1 max-w-[80%]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-foreground">
+                          {isAi
+                            ? aiModel?.name || "AI Assistant"
+                            : msg.profiles?.username}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(msg.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        {isAi && (
+                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
+                            AI
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className={cn(
+                          "rounded-lg px-4 py-2 text-sm border",
+                          isAi
+                            ? "bg-primary/5 border-primary/20 text-foreground"
+                            : "bg-secondary text-secondary-foreground border-border",
+                        )}
+                      >
+                        {msg.content}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {isAiThinking && (
+                <div className="flex gap-3 animate-pulse">
+                  <div className="mt-1 h-8 w-8 rounded-full bg-secondary" />
+                  <div className="space-y-2">
+                    <div className="h-4 w-24 rounded bg-secondary" />
+                    <div className="h-10 w-48 rounded bg-secondary" />
+                  </div>
                 </div>
-                <div className="rounded-lg bg-secondary px-4 py-2 text-sm text-secondary-foreground border border-border">
-                  {msg.content}
+              )}
+
+              <div ref={bottomRef} />
+            </div>
+          </div>
+
+          {/* Input Area */}
+          <div className="p-4 border-t border-border bg-background relative">
+            {/* Mention Suggestions */}
+            {mentionQuery !== null && filteredModels.length > 0 && (
+              <div className="absolute bottom-full left-4 mb-2 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-md animate-in fade-in slide-in-from-bottom-2">
+                <div className="p-1">
+                  {filteredModels.map((model, idx) => (
+                    <button
+                      type="button"
+                      key={model.id}
+                      onClick={() => insertMention(model)}
+                      className={cn(
+                        "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors text-left",
+                        idx === mentionIndex
+                          ? "bg-accent text-accent-foreground"
+                          : "text-popover-foreground hover:bg-accent/50",
+                      )}
+                    >
+                      <div
+                        className={cn("h-2 w-2 rounded-full", model.color)}
+                      />
+                      <span>{model.name}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
-      </div>
+            )}
 
-      {/* Input Area */}
-      <div className="p-4 border-t border-border bg-background">
-        <form
-          onSubmit={handleSendMessage}
-          className="relative flex items-center gap-2"
-        >
-          <Input
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            placeholder={
-              roomDetails.is_open ? "Type a message..." : "Room is closed."
-            }
-            disabled={!roomDetails.is_open}
-            className="bg-secondary border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary rounded-full pl-6 pr-12 h-12"
-          />
-          <Button
-            type="submit"
-            disabled={!roomDetails.is_open || !newMessage.trim()}
-            size="icon"
-            className="absolute right-2 h-8 w-8 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
+            <form
+              onSubmit={handleSendMessage}
+              className="relative flex items-center gap-2"
+            >
+              <Input
+                value={newMessage}
+                onChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                placeholder={
+                  roomDetails.is_open
+                    ? "Type a message... (Tip: @GPT to chat)"
+                    : "Room is closed."
+                }
+                disabled={!roomDetails.is_open}
+                className="bg-secondary border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary rounded-full pl-6 pr-12 h-12"
+              />
+              <Button
+                type="submit"
+                disabled={!roomDetails.is_open || !newMessage.trim()}
+                size="icon"
+                className="absolute right-2 h-8 w-8 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </form>
+          </div>
+        </div>
+
+        {/* Right Sidebar - Room Models */}
+        <RoomModelsSidebar roomId={roomId} />
       </div>
     </div>
   );
