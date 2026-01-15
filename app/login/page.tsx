@@ -17,16 +17,16 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 p-4 font-sans text-zinc-100">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4 font-sans text-foreground">
       <div className="w-full max-w-sm space-y-8 text-center">
         <div className="space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400 ring-1 ring-inset ring-indigo-500/20">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-inset ring-primary/20">
             <KeyRound className="h-6 w-6" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
             Welcome back
           </h1>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             Sign in to access your secure chatrooms
           </p>
         </div>
@@ -34,26 +34,26 @@ export default function LoginPage() {
         <div className="space-y-3">
           <Button
             variant="outline"
-            className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border-zinc-800 bg-zinc-900/50 px-4 py-5 text-sm font-medium text-zinc-200 transition-all hover:bg-zinc-800 hover:text-white"
+            className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border-border bg-secondary/50 px-4 py-5 text-sm font-medium text-secondary-foreground transition-all hover:bg-secondary hover:text-foreground"
             onClick={() => signInWith("github")}
           >
-            <Github className="h-4 w-4 text-zinc-400 transition-colors group-hover:text-white" />
+            <Github className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
             Continue with GitHub
           </Button>
         </div>
 
-        <p className="px-8 text-center text-xs text-zinc-500">
+        <p className="px-8 text-center text-xs text-muted-foreground">
           By clicking continue, you agree to our{" "}
           <a
             href="/"
-            className="underline underline-offset-4 hover:text-zinc-400"
+            className="underline underline-offset-4 hover:text-foreground"
           >
             Terms of Service
           </a>{" "}
           and{" "}
           <a
             href="/"
-            className="underline underline-offset-4 hover:text-zinc-400"
+            className="underline underline-offset-4 hover:text-foreground"
           >
             Privacy Policy
           </a>

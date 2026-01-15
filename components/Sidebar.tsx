@@ -1,7 +1,17 @@
 "use client";
 
-import { Hash, Key, LogOut, MessageSquare, Plus, Settings } from "lucide-react";
+import {
+  Hash,
+  Key,
+  LogOut,
+  MessageSquare,
+  Moon,
+  Plus,
+  Settings,
+  Sun,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -53,6 +63,7 @@ export default function Sidebar({
   const [inviteCode, setInviteCode] = useState("");
   const [newRoomName, setNewRoomName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const { setTheme } = useTheme();
 
   const supabase = createClient();
   const router = useRouter();
@@ -186,11 +197,11 @@ export default function Sidebar({
   }
 
   return (
-    <div className="flex h-full w-[280px] flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100">
+    <div className="flex h-full w-[280px] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       {/* Header */}
-      <div className="flex h-14 items-center justify-between border-b border-zinc-800 px-4">
+      <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
         <div className="flex items-center gap-2 font-semibold">
-          <MessageSquare className="h-5 w-5 text-indigo-500" />
+          <MessageSquare className="h-5 w-5 text-primary" />
           <span>E4 Chat</span>
         </div>
         <DropdownMenu>
@@ -200,9 +211,9 @@ export default function Sidebar({
               size="icon"
               className="h-8 w-8 rounded-full"
             >
-              <Avatar className="h-8 w-8 border border-zinc-700">
+              <Avatar className="h-8 w-8 border border-sidebar-border">
                 <AvatarImage src={profile?.avatar_url} />
-                <AvatarFallback className="bg-zinc-800 text-xs">
+                <AvatarFallback className="bg-sidebar-accent text-xs">
                   {profile?.username?.substring(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
@@ -210,16 +221,38 @@ export default function Sidebar({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            className="w-56 border-zinc-800 bg-zinc-900 text-zinc-100"
+            className="w-56 border-sidebar-border bg-sidebar text-sidebar-foreground"
           >
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
-            <DropdownMenuSeparator className="bg-zinc-800" />
-            <DropdownMenuItem className="text-zinc-400 focus:bg-zinc-800 focus:text-zinc-100">
+            <DropdownMenuSeparator className="bg-sidebar-border" />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Theme
+            </DropdownMenuLabel>
+            <div className="flex px-2 py-1 gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 flex-1 justify-start gap-2 text-xs"
+                onClick={() => setTheme("light")}
+              >
+                <Sun className="h-3 w-3" /> Light
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 flex-1 justify-start gap-2 text-xs"
+                onClick={() => setTheme("dark")}
+              >
+                <Moon className="h-3 w-3" /> Dark
+              </Button>
+            </div>
+            <DropdownMenuSeparator className="bg-sidebar-border" />
+            <DropdownMenuItem className="text-muted-foreground focus:bg-sidebar-accent focus:text-sidebar-accent-foreground">
               <Settings className="mr-2 h-4 w-4" />
               Settings
             </DropdownMenuItem>
             <DropdownMenuItem
-              className="text-red-400 focus:bg-red-950/20 focus:text-red-400"
+              className="text-destructive focus:bg-destructive/10 focus:text-destructive"
               onClick={handleSignOut}
             >
               <LogOut className="mr-2 h-4 w-4" />
@@ -235,13 +268,13 @@ export default function Sidebar({
           <DialogTrigger asChild>
             <Button
               variant="outline"
-              className="w-full justify-start gap-2 border-dashed border-zinc-700 bg-transparent text-zinc-400 hover:border-zinc-600 hover:text-zinc-100"
+              className="w-full justify-start gap-2 border-dashed border-sidebar-border bg-transparent text-muted-foreground hover:border-sidebar-foreground/20 hover:text-sidebar-foreground"
             >
               <Key className="h-4 w-4" />
               Join with Code
             </Button>
           </DialogTrigger>
-          <DialogContent className="border-zinc-800 bg-zinc-950 text-white sm:max-w-md">
+          <DialogContent className="border-border bg-background text-foreground sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Join a Room</DialogTitle>
             </DialogHeader>
@@ -251,7 +284,7 @@ export default function Sidebar({
                   placeholder="Enter invite code (e.g. X92-B88)"
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
-                  className="border-zinc-800 bg-zinc-900 text-white placeholder:text-zinc-500 focus-visible:ring-indigo-500"
+                  className="border-input bg-secondary text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
                 />
               </div>
             </div>
@@ -259,7 +292,7 @@ export default function Sidebar({
               <Button
                 onClick={handleJoinRoom}
                 disabled={isLoading || !inviteCode}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 {isLoading ? "Joining..." : "Join Room"}
               </Button>
@@ -269,12 +302,12 @@ export default function Sidebar({
 
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="w-full justify-start gap-2 bg-indigo-600 text-white hover:bg-indigo-500">
+            <Button className="w-full justify-start gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
               <Plus className="h-4 w-4" />
               Create Room
             </Button>
           </DialogTrigger>
-          <DialogContent className="border-zinc-800 bg-zinc-950 text-white sm:max-w-md">
+          <DialogContent className="border-border bg-background text-foreground sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Create a New Room</DialogTitle>
             </DialogHeader>
@@ -284,7 +317,7 @@ export default function Sidebar({
                   placeholder="Room Name"
                   value={newRoomName}
                   onChange={(e) => setNewRoomName(e.target.value)}
-                  className="border-zinc-800 bg-zinc-900 text-white placeholder:text-zinc-500 focus-visible:ring-indigo-500"
+                  className="border-input bg-secondary text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
                 />
               </div>
             </div>
@@ -292,7 +325,7 @@ export default function Sidebar({
               <Button
                 onClick={handleCreateRoom}
                 disabled={isLoading || !newRoomName}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 {isLoading ? "Creating..." : "Create Room"}
               </Button>
@@ -303,7 +336,7 @@ export default function Sidebar({
 
       {/* Room List */}
       <div className="flex-1 overflow-y-auto p-2">
-        <div className="mb-2 px-2 text-xs font-medium text-zinc-500">
+        <div className="mb-2 px-2 text-xs font-medium text-muted-foreground">
           YOUR ROOMS
         </div>
         <div className="space-y-1">
@@ -313,18 +346,18 @@ export default function Sidebar({
               key={room.id}
               onClick={() => onRoomSelect?.(room.id)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-zinc-900 hover:text-white",
+                "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 currentRoomId === room.id
-                  ? "bg-zinc-800 text-white"
-                  : "text-zinc-400",
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-muted-foreground",
               )}
             >
-              <Hash className="h-4 w-4 shrink-0 text-zinc-600" />
+              <Hash className="h-4 w-4 shrink-0 text-muted-foreground/70" />
               <span className="truncate">{room.slug}</span>
             </button>
           ))}
           {rooms.length === 0 && (
-            <div className="px-2 py-4 text-center text-xs text-zinc-600">
+            <div className="px-2 py-4 text-center text-xs text-muted-foreground">
               No rooms yet. Join one or create your own!
             </div>
           )}

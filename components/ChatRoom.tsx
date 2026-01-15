@@ -266,18 +266,18 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   // (We'd need to store current user in state, doing lazy check here)
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950 text-zinc-100">
+    <div className="flex h-full flex-col bg-background text-foreground">
       {/* Top Bar */}
-      <div className="flex h-16 shrink-0 items-center justify-between border-b border-zinc-800 px-6">
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-border px-6">
         <div>
-          <h2 className="text-lg font-semibold text-white">
+          <h2 className="text-lg font-semibold text-foreground">
             {roomDetails.slug}
           </h2>
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <div
               className={cn(
                 "h-2 w-2 rounded-full",
-                roomDetails.is_open ? "bg-green-500" : "bg-red-500",
+                roomDetails.is_open ? "bg-emerald-500" : "bg-destructive",
               )}
             />
             {roomDetails.is_open ? "Open" : "Closed"}
@@ -298,12 +298,12 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                   size="icon"
                   onClick={toggleRoomStatus}
                   className={cn(
-                    "text-zinc-400 hover:text-white",
-                    !roomDetails.is_open && "text-red-400",
+                    "text-muted-foreground hover:text-foreground",
+                    !roomDetails.is_open && "text-destructive",
                   )}
                 >
                   {roomDetails.is_open ? (
-                    <ToggleRight className="h-6 w-6 text-green-500" />
+                    <ToggleRight className="h-6 w-6 text-emerald-500" />
                   ) : (
                     <ToggleLeft className="h-6 w-6" />
                   )}
@@ -321,17 +321,17 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
 
           {/* Invite Code Display */}
           {inviteCode ? (
-            <div className="flex items-center gap-2 rounded-md bg-zinc-900 px-3 py-1.5 border border-zinc-800">
-              <span className="text-xs font-mono text-zinc-400 tracking-wider">
+            <div className="flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 border border-border">
+              <span className="text-xs font-mono text-muted-foreground tracking-wider">
                 CODE:
               </span>
-              <span className="text-sm font-bold text-indigo-400">
+              <span className="text-sm font-bold text-primary">
                 {inviteCode}
               </span>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 ml-1 text-zinc-500 hover:text-white"
+                className="h-5 w-5 ml-1 text-muted-foreground hover:text-foreground"
                 onClick={copyCode}
               >
                 {isCopied ? (
@@ -353,7 +353,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
           )}
 
           <Button variant="ghost" size="icon">
-            <Activity className="h-5 w-5 text-zinc-400" />
+            <Activity className="h-5 w-5 text-muted-foreground" />
           </Button>
         </div>
       </div>
@@ -366,25 +366,25 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
               key={msg.id}
               className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300"
             >
-              <Avatar className="mt-1 h-8 w-8 border border-zinc-800">
+              <Avatar className="mt-1 h-8 w-8 border border-border">
                 <AvatarImage src={msg.profiles?.avatar_url} />
-                <AvatarFallback>
+                <AvatarFallback className="bg-secondary text-secondary-foreground text-xs">
                   {msg.profiles?.username?.substring(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-white">
+                  <span className="text-sm font-medium text-foreground">
                     {msg.profiles?.username}
                   </span>
-                  <span className="text-[10px] text-zinc-500">
+                  <span className="text-[10px] text-muted-foreground">
                     {new Date(msg.created_at).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
                     })}
                   </span>
                 </div>
-                <div className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-zinc-200 border border-zinc-800">
+                <div className="rounded-lg bg-secondary px-4 py-2 text-sm text-secondary-foreground border border-border">
                   {msg.content}
                 </div>
               </div>
@@ -395,7 +395,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       </div>
 
       {/* Input Area */}
-      <div className="p-4 border-t border-zinc-800 bg-zinc-950">
+      <div className="p-4 border-t border-border bg-background">
         <form
           onSubmit={handleSendMessage}
           className="relative flex items-center gap-2"
@@ -407,13 +407,13 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
               roomDetails.is_open ? "Type a message..." : "Room is closed."
             }
             disabled={!roomDetails.is_open}
-            className="bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 focus-visible:ring-indigo-500 rounded-full pl-6 pr-12 h-12"
+            className="bg-secondary border-border text-foreground placeholder:text-muted-foreground focus-visible:ring-primary rounded-full pl-6 pr-12 h-12"
           />
           <Button
             type="submit"
             disabled={!roomDetails.is_open || !newMessage.trim()}
             size="icon"
-            className="absolute right-2 h-8 w-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white"
+            className="absolute right-2 h-8 w-8 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             <Send className="h-4 w-4" />
           </Button>

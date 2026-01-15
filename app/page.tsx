@@ -8,7 +8,7 @@ export default function Home() {
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-zinc-950">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       <Sidebar
         currentRoomId={currentRoomId || undefined}
         onRoomSelect={(id) => setCurrentRoomId(id)}
@@ -17,12 +17,12 @@ export default function Home() {
         {currentRoomId ? (
           <ChatRoom roomId={currentRoomId} />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center text-zinc-500 gap-4">
-            <div className="h-16 w-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+          <div className="flex h-full flex-col items-center justify-center text-muted-foreground gap-4">
+            <div className="h-16 w-16 rounded-2xl bg-secondary border border-border flex items-center justify-center animate-in zoom-in-50 duration-500">
               <span className="text-2xl">👋</span>
             </div>
-            <div className="text-center">
-              <h3 className="text-lg font-medium text-zinc-200">
+            <div className="text-center space-y-1">
+              <h3 className="text-lg font-medium text-foreground">
                 Welcome to E4 Chat
               </h3>
               <p className="text-sm">
