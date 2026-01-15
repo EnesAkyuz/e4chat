@@ -176,7 +176,7 @@ export default function Sidebar({
       .insert({
         slug: slug,
         created_by: profile.id,
-        is_open: true, // Open by default for now
+        is_open: false, // Closed/Private by default
       })
       .select()
       .single();

@@ -12,7 +12,7 @@ export async function POST(req: Request) {
       {
         error: "Server Configuration Error: Missing SUPABASE_SERVICE_ROLE_KEY",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -25,12 +25,18 @@ export async function POST(req: Request) {
         autoRefreshToken: false,
         persistSession: false,
       },
-    }
+    },
   );
 
   try {
+    // Map friendly model IDs to provider specific IDs if necessary
+    let providerModel = modelId;
+    if (modelId === "gemini-2.5-flash") {
+      providerModel = "models/gemini-2.5-flash";
+    }
+
     const model = modelId.startsWith("gemini")
-      ? google(modelId)
+      ? google(providerModel)
       : openai(modelId);
 
     const response = await generateText({
@@ -59,7 +65,7 @@ export async function POST(req: Request) {
     console.error("AI Generation Error:", error);
     return Response.json(
       { error: "Failed to generate response" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

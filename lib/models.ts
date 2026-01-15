@@ -24,10 +24,10 @@ export const AVAILABLE_MODELS: AIModel[] = [
     color: "bg-emerald-400",
   },
   {
-    id: "o1-preview",
-    name: "OpenAI o1",
+    id: "gpt-4-turbo",
+    name: "GPT-4 Turbo",
     provider: "openai",
-    description: "Advanced reasoning model.",
+    description: "High-intelligence model.",
     color: "bg-blue-600",
   },
   // Placeholders for future providers
@@ -39,10 +39,10 @@ export const AVAILABLE_MODELS: AIModel[] = [
     color: "bg-orange-500",
   },
   {
-    id: "gemini-1.5-pro",
-    name: "Gemini 1.5 Pro",
+    id: "gemini-2.5-flash",
+    name: "Gemini 2.5 Flash",
     provider: "google",
-    description: "Google's highly capable multimodal model.",
+    description: "Google's latest fast multimodal model.",
     color: "bg-blue-500",
   },
 ];
