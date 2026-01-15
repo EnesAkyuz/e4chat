@@ -9,10 +9,11 @@ import {
   Plus,
   Settings,
   Sun,
+  Trash2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,7 +66,7 @@ export default function Sidebar({
   const [isLoading, setIsLoading] = useState(false);
   const { setTheme } = useTheme();
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
 
   const fetchProfile = useCallback(async () => {
@@ -114,6 +115,18 @@ export default function Sidebar({
           filter: `profile_id=eq.${profile?.id}`,
         },
         () => {
+          fetchRooms();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "rooms",
+        },
+        () => {
+          // On any room change (that we have permission to see/receieve), refresh.
           fetchRooms();
         },
       )
@@ -189,6 +202,34 @@ export default function Sidebar({
     }
 
     setIsLoading(false);
+  }
+
+  async function handleDeleteRoom(roomId: string) {
+    if (
+      !confirm(
+        "Are you sure you want to delete this room? This cannot be undone.",
+      )
+    )
+      return;
+
+    // Optimistic update
+    setRooms(rooms.filter((r) => r.id !== roomId));
+
+    const { error } = await supabase.from("rooms").delete().eq("id", roomId);
+    if (error) {
+      alert("Error deleting room: " + error.message);
+      fetchRooms(); // Rollback if failed
+    } else {
+      if (currentRoomId === roomId) {
+        // If deleted active room, clear selection. Navigate home/null
+        // Here we just rely on parent to handle it, or we simply do nothing.
+        // But ideally trigger a callback if needed.
+        // For now, if currentRoomId is passed, maybe the parent component needs to know.
+        // But we don't have an onRoomDeleted prop.
+        // Simply refreshing the page or clearing selection would be best.
+        window.location.reload();
+      }
+    }
   }
 
   async function handleSignOut() {
@@ -341,20 +382,42 @@ export default function Sidebar({
         </div>
         <div className="space-y-1">
           {rooms.map((room) => (
-            <button
-              type="button"
+            // biome-ignore lint/a11y/useSemanticElements: specialized button container to avoid nesting
+            <div
               key={room.id}
+              role="button"
+              tabIndex={0}
               onClick={() => onRoomSelect?.(room.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  onRoomSelect?.(room.id);
+                }
+              }}
               className={cn(
-                "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                "group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground items-center",
                 currentRoomId === room.id
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-muted-foreground",
               )}
             >
               <Hash className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-              <span className="truncate">{room.slug}</span>
-            </button>
+              <span className="truncate flex-1 text-left">{room.slug}</span>
+              {rooms.find((r) => r.id === room.id)?.created_by ===
+                profile?.id && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all ml-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteRoom(room.id);
+                  }}
+                  title="Delete Room"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
           ))}
           {rooms.length === 0 && (
             <div className="px-2 py-4 text-center text-xs text-muted-foreground">

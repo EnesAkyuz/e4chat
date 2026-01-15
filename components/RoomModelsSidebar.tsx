@@ -1,7 +1,7 @@
 "use client";
 
 import { Bot, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,7 @@ interface RoomModel {
 
 export function RoomModelsSidebar({ roomId }: { roomId: string }) {
   const [activeModels, setActiveModels] = useState<RoomModel[]>([]);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const fetchRoomModels = useCallback(async () => {
     const { data } = await supabase
@@ -73,6 +73,8 @@ export function RoomModelsSidebar({ roomId }: { roomId: string }) {
   }
 
   async function removeModel(id: string) {
+    // Optimistic update
+    setActiveModels((prev) => prev.filter((m) => m.id !== id));
     await supabase.from("room_models").delete().eq("id", id);
   }
 

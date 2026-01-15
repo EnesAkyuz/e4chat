@@ -11,7 +11,7 @@ import {
   ToggleRight,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -87,7 +87,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   const [mentionIndex, setMentionIndex] = useState(0);
 
   const bottomRef = useRef<HTMLDivElement>(null);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   // Check if user is owner
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
