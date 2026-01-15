@@ -35,7 +35,7 @@ import {
 import { AVAILABLE_MODELS } from "@/lib/models";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
-import { RoomModelsSidebar } from "./RoomModelsSidebar";
+import { RoomSidebar } from "./RoomSidebar";
 
 interface Message {
   id: string;
@@ -62,6 +62,7 @@ interface Participant {
 interface Room {
   id: string;
   slug: string;
+  name?: string;
   created_by: string;
   is_open: boolean;
   password?: string;
@@ -86,15 +87,31 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
 
+  // Presence state
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const supabase = useMemo(() => createClient(), []);
 
   // Check if user is owner
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUsername, setCurrentUsername] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setCurrentUserId(data.user?.id || null);
+    supabase.auth.getUser().then(async ({ data }) => {
+      const userId = data.user?.id || null;
+      setCurrentUserId(userId);
+
+      if (userId) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("username")
+          .eq("id", userId)
+          .single();
+        setCurrentUsername(profile?.username || null);
+      }
     });
   }, [supabase]);
 
@@ -218,6 +235,30 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setNewMessage(val);
+
+    // Broadcast typing status
+    if (val.trim() && currentUserId && currentUsername) {
+      const presenceChannel = supabase.channel(`presence:${roomId}`);
+      presenceChannel.track({
+        user_id: currentUserId,
+        username: currentUsername,
+        is_typing: true,
+      });
+
+      // Clear previous timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Set timeout to stop typing after 2 seconds of inactivity
+      typingTimeoutRef.current = setTimeout(() => {
+        presenceChannel.track({
+          user_id: currentUserId,
+          username: currentUsername,
+          is_typing: false,
+        });
+      }, 2000);
+    }
 
     const lastAtPos = val.lastIndexOf("@");
     if (lastAtPos !== -1) {
@@ -345,6 +386,76 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAiThinking]);
+
+  // Presence channel for online status and typing indicators
+  useEffect(() => {
+    if (!roomId || !currentUserId || !currentUsername) return;
+
+    const presenceChannel = supabase.channel(`presence:${roomId}`, {
+      config: { presence: { key: currentUserId } },
+    });
+
+    presenceChannel
+      .on("presence", { event: "sync" }, () => {
+        const state = presenceChannel.presenceState();
+        const online = new Set<string>();
+        const typing = new Set<string>();
+
+        for (const presences of Object.values(state)) {
+          for (const p of presences) {
+            const presence = p as unknown as {
+              user_id: string;
+              username: string;
+              is_typing: boolean;
+            };
+            online.add(presence.user_id);
+            if (presence.is_typing && presence.user_id !== currentUserId) {
+              typing.add(presence.username);
+            }
+          }
+        }
+
+        setOnlineUsers(online);
+        setTypingUsers(typing);
+      })
+      .on("presence", { event: "join" }, ({ newPresences }) => {
+        for (const p of newPresences) {
+          const presence = p as unknown as { user_id: string };
+          setOnlineUsers((prev) => new Set(prev).add(presence.user_id));
+        }
+      })
+      .on("presence", { event: "leave" }, ({ leftPresences }) => {
+        for (const p of leftPresences) {
+          const presence = p as unknown as {
+            user_id: string;
+            username: string;
+          };
+          setOnlineUsers((prev) => {
+            const next = new Set(prev);
+            next.delete(presence.user_id);
+            return next;
+          });
+          setTypingUsers((prev) => {
+            const next = new Set(prev);
+            next.delete(presence.username);
+            return next;
+          });
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await presenceChannel.track({
+            user_id: currentUserId,
+            username: currentUsername,
+            is_typing: false,
+          });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [roomId, currentUserId, currentUsername, supabase]);
 
   async function handleSendMessage(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -541,7 +652,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-border px-6">
         <div>
           <h2 className="text-lg font-semibold text-foreground">
-            {roomDetails.slug}
+            {roomDetails.name || roomDetails.slug}
           </h2>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <div
@@ -554,6 +665,11 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
             <span>•</span>
             <span className="flex items-center gap-1">
               <Users className="h-3 w-3" /> {participants.length} members
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1 text-emerald-500">
+              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              {onlineUsers.size} online
             </span>
           </div>
         </div>
@@ -794,6 +910,21 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                 </div>
               )}
 
+              {/* Typing indicator */}
+              {typingUsers.size > 0 && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in">
+                  <div className="flex gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
+                  </div>
+                  <span>
+                    {Array.from(typingUsers).join(", ")}{" "}
+                    {typingUsers.size === 1 ? "is" : "are"} typing...
+                  </span>
+                </div>
+              )}
+
               <div ref={bottomRef} />
             </div>
           </div>
@@ -854,8 +985,14 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
           </div>
         </div>
 
-        {/* Right Sidebar - Room Models */}
-        <RoomModelsSidebar roomId={roomId} />
+        {/* Right Sidebar - Members & Models */}
+        <RoomSidebar
+          roomId={roomId}
+          participants={participants}
+          onlineUsers={onlineUsers}
+          typingUsers={typingUsers}
+          ownerId={roomDetails.created_by}
+        />
       </div>
     </div>
   );

@@ -32,7 +32,13 @@ interface RoomModel {
   room_id: string;
 }
 
-export function RoomModelsSidebar({ roomId }: { roomId: string }) {
+export function RoomModelsSidebar({
+  roomId,
+  embedded = false,
+}: {
+  roomId: string;
+  embedded?: boolean;
+}) {
   const [activeModels, setActiveModels] = useState<RoomModel[]>([]);
   const [modelToDelete, setModelToDelete] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
@@ -101,12 +107,17 @@ export function RoomModelsSidebar({ roomId }: { roomId: string }) {
     (m) => !activeModels.some((am) => am.model_id === m.id),
   );
 
-  return (
-    <div className="flex h-full w-[240px] flex-col border-l border-border bg-sidebar text-sidebar-foreground">
-      <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-4">
+  const content = (
+    <>
+      <div
+        className={cn(
+          "flex items-center justify-between border-sidebar-border px-4",
+          embedded ? "h-12 border-b" : "h-16 border-b",
+        )}
+      >
         <div className="flex items-center gap-2 font-semibold">
-          <Bot className="h-4 w-4 text-primary" />
-          <span>Models</span>
+          {!embedded && <Bot className="h-4 w-4 text-primary" />}
+          <span>{embedded ? "Add AI to Room" : "Models"}</span>
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -210,6 +221,18 @@ export function RoomModelsSidebar({ roomId }: { roomId: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </>
+  );
+
+  // Embedded mode: just return the content without container
+  if (embedded) {
+    return <div className="flex h-full flex-col">{content}</div>;
+  }
+
+  // Standalone mode: return with full sidebar container
+  return (
+    <div className="flex h-full w-[240px] flex-col border-l border-border bg-sidebar text-sidebar-foreground">
+      {content}
     </div>
   );
 }

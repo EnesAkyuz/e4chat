@@ -50,6 +50,7 @@ import { createClient } from "@/utils/supabase/client";
 interface Room {
   id: string;
   slug: string;
+  name?: string;
   created_by: string;
   is_open: boolean;
   created_at: string;
@@ -130,7 +131,7 @@ export default function Sidebar({
         },
         () => {
           fetchRooms();
-        },
+        }
       )
       .on(
         "postgres_changes",
@@ -142,7 +143,7 @@ export default function Sidebar({
         () => {
           // On any room change (that we have permission to see/receieve), refresh.
           fetchRooms();
-        },
+        }
       )
       .subscribe();
 
@@ -219,6 +220,7 @@ export default function Sidebar({
       .from("rooms")
       .insert({
         slug: slug,
+        name: newRoomName, // Store the display name
         created_by: profile.id,
         is_open: false, // Closed/Private by default
       })
@@ -389,8 +391,8 @@ export default function Sidebar({
                 {isLoading
                   ? "Joining..."
                   : isPasswordRequired
-                    ? "Submit Password"
-                    : "Join Room"}
+                  ? "Submit Password"
+                  : "Join Room"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -452,11 +454,13 @@ export default function Sidebar({
                 "group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground items-center",
                 currentRoomId === room.id
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground",
+                  : "text-muted-foreground"
               )}
             >
               <Hash className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-              <span className="truncate flex-1 text-left">{room.slug}</span>
+              <span className="truncate flex-1 text-left">
+                {room.name || room.slug}
+              </span>
               {rooms.find((r) => r.id === room.id)?.created_by ===
                 profile?.id && (
                 <Button
