@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +33,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { AVAILABLE_MODELS } from "@/lib/models";
-
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
 import { RoomModelsSidebar } from "./RoomModelsSidebar";
@@ -113,11 +113,11 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       .eq("id", roomId);
 
     if (error) {
-      alert(`Error setting password: ${error.message}`);
+      toast.error(`Error setting password: ${error.message}`);
     } else {
       setNewPassword("");
       setIsPasswordDialogOpen(false);
-      alert("Password set successfully!");
+      toast.success("Password set successfully!");
     }
   };
 

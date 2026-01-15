@@ -2,6 +2,17 @@
 
 import { Bot, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +34,7 @@ interface RoomModel {
 
 export function RoomModelsSidebar({ roomId }: { roomId: string }) {
   const [activeModels, setActiveModels] = useState<RoomModel[]>([]);
+  const [modelToDelete, setModelToDelete] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
 
   const fetchRoomModels = useCallback(async () => {
@@ -75,7 +87,14 @@ export function RoomModelsSidebar({ roomId }: { roomId: string }) {
   async function removeModel(id: string) {
     // Optimistic update
     setActiveModels((prev) => prev.filter((m) => m.id !== id));
-    await supabase.from("room_models").delete().eq("id", id);
+    const { error } = await supabase.from("room_models").delete().eq("id", id);
+    if (error) {
+      toast.error(`Error removing model: ${error.message}`);
+      fetchRoomModels();
+    } else {
+      toast.success("Model removed from room");
+    }
+    setModelToDelete(null);
   }
 
   const availableToAdd = AVAILABLE_MODELS.filter(
@@ -156,7 +175,7 @@ export function RoomModelsSidebar({ roomId }: { roomId: string }) {
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                  onClick={() => removeModel(rm.id)}
+                  onClick={() => setModelToDelete(rm.id)}
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>
@@ -165,6 +184,32 @@ export function RoomModelsSidebar({ roomId }: { roomId: string }) {
           })}
         </div>
       </ScrollArea>
+
+      <AlertDialog
+        open={modelToDelete !== null}
+        onOpenChange={(open) => !open && setModelToDelete(null)}
+      >
+        <AlertDialogContent className="border-border bg-background text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove AI Model?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the model from the current room. You can always
+              add it back later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-border bg-transparent hover:bg-sidebar-accent">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => modelToDelete && removeModel(modelToDelete)}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

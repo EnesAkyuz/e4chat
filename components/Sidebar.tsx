@@ -14,6 +14,17 @@ import {
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,6 +75,7 @@ export default function Sidebar({
   const [inviteCode, setInviteCode] = useState("");
   const [newRoomName, setNewRoomName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [roomToDelete, setRoomToDelete] = useState<string | null>(null);
   const { setTheme } = useTheme();
 
   const supabase = useMemo(() => createClient(), []);
@@ -158,8 +170,8 @@ export default function Sidebar({
       setInviteCode("");
       setIsJoinDialogOpen(false);
       fetchRooms(); // Refresh list
+      toast.success("Successfully joined the room!");
 
-      if (onRoomSelect) onRoomSelect(data.room_id);
       if (onRoomSelect) onRoomSelect(data.room_id);
     } catch (err: unknown) {
       let errorMessage = "An unknown error occurred";
@@ -168,7 +180,7 @@ export default function Sidebar({
       } else if (typeof err === "object" && err !== null && "message" in err) {
         errorMessage = (err as { message: string }).message;
       }
-      alert(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -205,31 +217,20 @@ export default function Sidebar({
   }
 
   async function handleDeleteRoom(roomId: string) {
-    if (
-      !confirm(
-        "Are you sure you want to delete this room? This cannot be undone.",
-      )
-    )
-      return;
-
     // Optimistic update
     setRooms(rooms.filter((r) => r.id !== roomId));
 
     const { error } = await supabase.from("rooms").delete().eq("id", roomId);
     if (error) {
-      alert("Error deleting room: " + error.message);
+      toast.error(`Error deleting room: ${error.message}`);
       fetchRooms(); // Rollback if failed
     } else {
+      toast.success("Room deleted successfully");
       if (currentRoomId === roomId) {
-        // If deleted active room, clear selection. Navigate home/null
-        // Here we just rely on parent to handle it, or we simply do nothing.
-        // But ideally trigger a callback if needed.
-        // For now, if currentRoomId is passed, maybe the parent component needs to know.
-        // But we don't have an onRoomDeleted prop.
-        // Simply refreshing the page or clearing selection would be best.
         window.location.reload();
       }
     }
+    setRoomToDelete(null);
   }
 
   async function handleSignOut() {
@@ -410,7 +411,7 @@ export default function Sidebar({
                   className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all ml-1"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleDeleteRoom(room.id);
+                    setRoomToDelete(room.id);
                   }}
                   title="Delete Room"
                 >
@@ -426,6 +427,32 @@ export default function Sidebar({
           )}
         </div>
       </div>
+
+      <AlertDialog
+        open={roomToDelete !== null}
+        onOpenChange={(open) => !open && setRoomToDelete(null)}
+      >
+        <AlertDialogContent className="border-border bg-background text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the
+              room and all associated messages.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-border bg-transparent hover:bg-sidebar-accent">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => roomToDelete && handleDeleteRoom(roomToDelete)}
+            >
+              Delete Room
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
