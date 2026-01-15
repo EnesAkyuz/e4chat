@@ -105,11 +105,12 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   const [newPassword, setNewPassword] = useState("");
 
   const handleSetPassword = async () => {
-    if (!newPassword.trim()) return;
+    // Allow empty to remove password (set to null)
+    const passwordValue = newPassword.trim() || null;
 
     const { error } = await supabase
       .from("rooms")
-      .update({ password: newPassword })
+      .update({ password: passwordValue })
       .eq("id", roomId);
 
     if (error) {
@@ -117,7 +118,9 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     } else {
       setNewPassword("");
       setIsPasswordDialogOpen(false);
-      toast.success("Password set successfully!");
+      toast.success(
+        passwordValue ? "Password set successfully!" : "Password removed!",
+      );
     }
   };
 
@@ -602,8 +605,24 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                     />
                   </div>
                 </div>
-                <DialogFooter>
-                  <Button onClick={handleSetPassword}>Save Password</Button>
+                <DialogFooter className="gap-2 sm:gap-0">
+                  {roomDetails.password && (
+                    <Button
+                      variant="destructive"
+                      onClick={() => {
+                        setNewPassword("");
+                        handleSetPassword();
+                      }}
+                    >
+                      Remove Password
+                    </Button>
+                  )}
+                  <Button
+                    onClick={handleSetPassword}
+                    disabled={!newPassword.trim()}
+                  >
+                    {roomDetails.password ? "Update Password" : "Set Password"}
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

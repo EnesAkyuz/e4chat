@@ -73,6 +73,8 @@ export default function Sidebar({
   const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
+  const [roomPassword, setRoomPassword] = useState("");
+  const [isPasswordRequired, setIsPasswordRequired] = useState(false);
   const [newRoomName, setNewRoomName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [roomToDelete, setRoomToDelete] = useState<string | null>(null);
@@ -162,12 +164,29 @@ export default function Sidebar({
     try {
       const { data, error } = await supabase.rpc("join_room_by_code", {
         invite_code: inviteCode,
+        supplied_password: roomPassword || null,
       });
 
       if (error) throw error;
+
+      // Check if password is required or incorrect
+      if (!data.success && data.password_required) {
+        setIsPasswordRequired(true);
+        // Clear password field for retry (handles edge case of password change while joining)
+        if (roomPassword) {
+          setRoomPassword("");
+          toast.error("Incorrect password. Please try again.");
+        }
+        setIsLoading(false);
+        return;
+      }
+
       if (!data.success) throw new Error(data.error);
 
+      // Success - reset state
       setInviteCode("");
+      setRoomPassword("");
+      setIsPasswordRequired(false);
       setIsJoinDialogOpen(false);
       fetchRooms(); // Refresh list
       toast.success("Successfully joined the room!");
@@ -306,7 +325,18 @@ export default function Sidebar({
 
       {/* Actions */}
       <div className="p-4 space-y-2">
-        <Dialog open={isJoinDialogOpen} onOpenChange={setIsJoinDialogOpen}>
+        <Dialog
+          open={isJoinDialogOpen}
+          onOpenChange={(open) => {
+            setIsJoinDialogOpen(open);
+            if (!open) {
+              // Reset state when dialog closes
+              setInviteCode("");
+              setRoomPassword("");
+              setIsPasswordRequired(false);
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button
               variant="outline"
@@ -326,17 +356,41 @@ export default function Sidebar({
                   placeholder="Enter invite code (e.g. X92-B88)"
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
+                  disabled={isPasswordRequired}
                   className="border-input bg-secondary text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
                 />
               </div>
+              {isPasswordRequired && (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    This room requires a password to join.
+                  </p>
+                  <Input
+                    type="password"
+                    placeholder="Enter room password"
+                    value={roomPassword}
+                    onChange={(e) => setRoomPassword(e.target.value)}
+                    autoFocus
+                    className="border-input bg-secondary text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
+                  />
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button
                 onClick={handleJoinRoom}
-                disabled={isLoading || !inviteCode}
+                disabled={
+                  isLoading ||
+                  !inviteCode ||
+                  (isPasswordRequired && !roomPassword)
+                }
                 className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
-                {isLoading ? "Joining..." : "Join Room"}
+                {isLoading
+                  ? "Joining..."
+                  : isPasswordRequired
+                    ? "Submit Password"
+                    : "Join Room"}
               </Button>
             </DialogFooter>
           </DialogContent>
