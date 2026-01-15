@@ -286,72 +286,73 @@ export default function Sidebar({
       {/* Header */}
       <div
         className={cn(
-          "flex h-14 items-center border-b border-sidebar-border",
-          isCollapsed ? "justify-center px-2" : "justify-between px-4",
+          "flex items-center border-b border-sidebar-border",
+          isCollapsed
+            ? "h-auto flex-col gap-3 py-3 px-2"
+            : "h-14 flex-row justify-between px-4",
         )}
       >
         <div className="flex items-center gap-2 font-semibold">
           <MessageSquare className="h-5 w-5 text-primary shrink-0" />
           {!isCollapsed && <span>E4 Chat</span>}
         </div>
-        {!isCollapsed && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full"
+            >
+              <Avatar className="h-8 w-8 border border-sidebar-border">
+                <AvatarImage src={profile?.avatar_url} />
+                <AvatarFallback className="bg-sidebar-accent text-xs">
+                  {profile?.username?.substring(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align={isCollapsed ? "start" : "end"}
+            side={isCollapsed ? "right" : "bottom"}
+            className="w-56 border-sidebar-border bg-sidebar text-sidebar-foreground"
+          >
+            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuSeparator className="bg-sidebar-border" />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Theme
+            </DropdownMenuLabel>
+            <div className="flex px-2 py-1 gap-2">
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-full"
+                size="sm"
+                className="h-8 flex-1 justify-start gap-2 text-xs"
+                onClick={() => setTheme("light")}
               >
-                <Avatar className="h-8 w-8 border border-sidebar-border">
-                  <AvatarImage src={profile?.avatar_url} />
-                  <AvatarFallback className="bg-sidebar-accent text-xs">
-                    {profile?.username?.substring(0, 2).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
+                <Sun className="h-3 w-3" /> Light
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-56 border-sidebar-border bg-sidebar text-sidebar-foreground"
-            >
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
-              <DropdownMenuSeparator className="bg-sidebar-border" />
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                Theme
-              </DropdownMenuLabel>
-              <div className="flex px-2 py-1 gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 flex-1 justify-start gap-2 text-xs"
-                  onClick={() => setTheme("light")}
-                >
-                  <Sun className="h-3 w-3" /> Light
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 flex-1 justify-start gap-2 text-xs"
-                  onClick={() => setTheme("dark")}
-                >
-                  <Moon className="h-3 w-3" /> Dark
-                </Button>
-              </div>
-              <DropdownMenuSeparator className="bg-sidebar-border" />
-              <DropdownMenuItem className="text-muted-foreground focus:bg-sidebar-accent focus:text-sidebar-accent-foreground">
-                <Settings className="mr-2 h-4 w-4" />
-                Settings
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-destructive focus:bg-destructive/10 focus:text-destructive"
-                onClick={handleSignOut}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 flex-1 justify-start gap-2 text-xs"
+                onClick={() => setTheme("dark")}
               >
-                <LogOut className="mr-2 h-4 w-4" />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+                <Moon className="h-3 w-3" /> Dark
+              </Button>
+            </div>
+            <DropdownMenuSeparator className="bg-sidebar-border" />
+            <DropdownMenuItem className="text-muted-foreground focus:bg-sidebar-accent focus:text-sidebar-accent-foreground">
+              <Settings className="mr-2 h-4 w-4" />
+              Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+              onClick={handleSignOut}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Actions - hidden when collapsed */}
