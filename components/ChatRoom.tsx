@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -893,7 +894,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                             : "bg-secondary text-secondary-foreground border-border",
                         )}
                       >
-                        {msg.content}
+                        <MarkdownContent content={msg.content} />
                       </div>
                     </div>
                   </div>

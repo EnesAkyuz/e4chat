@@ -151,4 +151,17 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Markdown content styling */
+  .markdown-content {
+    @apply break-words;
+  }
+
+  .markdown-content pre {
+    @apply overflow-x-auto;
+  }
+
+  .markdown-content code {
+    @apply break-all;
+  }
 }
