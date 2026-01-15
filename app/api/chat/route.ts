@@ -16,9 +16,19 @@ export async function POST(req: Request) {
     );
   }
 
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    console.error("Missing NEXT_PUBLIC_SUPABASE_URL");
+    return Response.json(
+      {
+        error: "Server Configuration Error: Missing NEXT_PUBLIC_SUPABASE_URL",
+      },
+      { status: 500 },
+    );
+  }
+
   // Initialize Supabase Admin client with Service Role Key
   const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY,
     {
       auth: {

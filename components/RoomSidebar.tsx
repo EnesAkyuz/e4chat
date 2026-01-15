@@ -1,8 +1,9 @@
 "use client";
 
-import { Bot, Crown, Users } from "lucide-react";
+import { Bot, ChevronLeft, ChevronRight, Crown, Users } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ export function RoomSidebar({
   ownerId,
 }: RoomSidebarProps) {
   const [activeTab, setActiveTab] = useState<"members" | "models">("members");
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Sort: online first, then owner first, then alphabetically
   const sortedParticipants = [...participants].sort((a, b) => {
@@ -56,97 +58,150 @@ export function RoomSidebar({
   });
 
   return (
-    <div className="flex h-full w-[260px] flex-col border-l border-border bg-sidebar text-sidebar-foreground">
-      <Tabs
-        value={activeTab}
-        onValueChange={(v: string) => setActiveTab(v as "members" | "models")}
-        className="flex h-full flex-col"
+    <div
+      className={cn(
+        "relative flex h-full flex-col border-l border-border bg-sidebar text-sidebar-foreground transition-all duration-300",
+        isCollapsed ? "w-12" : "w-[260px]",
+      )}
+    >
+      {/* Collapse toggle button */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="absolute -left-3 top-4 z-10 h-6 w-6 rounded-full border border-border bg-sidebar shadow-sm hover:bg-sidebar-accent"
       >
-        <TabsList className="h-16 w-full justify-start gap-0 rounded-none border-b border-sidebar-border bg-transparent p-0">
-          <TabsTrigger
+        {isCollapsed ? (
+          <ChevronLeft className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
+        )}
+      </Button>
+
+      {isCollapsed ? (
+        // Collapsed state - show icon buttons
+        <div className="flex flex-col items-center gap-2 pt-16">
+          <Button
+            variant={activeTab === "members" ? "secondary" : "ghost"}
+            size="icon"
+            onClick={() => {
+              setActiveTab("members");
+              setIsCollapsed(false);
+            }}
+            className="h-8 w-8"
+            title="Members"
+          >
+            <Users className="h-4 w-4" />
+          </Button>
+          <Button
+            variant={activeTab === "models" ? "secondary" : "ghost"}
+            size="icon"
+            onClick={() => {
+              setActiveTab("models");
+              setIsCollapsed(false);
+            }}
+            className="h-8 w-8"
+            title="Models"
+          >
+            <Bot className="h-4 w-4" />
+          </Button>
+          <div className="mt-2 text-[10px] text-muted-foreground">
+            {onlineUsers.size}
+          </div>
+        </div>
+      ) : (
+        <Tabs
+          value={activeTab}
+          onValueChange={(v: string) => setActiveTab(v as "members" | "models")}
+          className="flex h-full flex-col"
+        >
+          <TabsList className="h-16 w-full justify-start gap-0 rounded-none border-b border-sidebar-border bg-transparent p-0">
+            <TabsTrigger
+              value="members"
+              className="h-full flex-1 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            >
+              <Users className="mr-2 h-4 w-4" />
+              <span>Members</span>
+              <span className="ml-1.5 rounded-full bg-sidebar-accent px-1.5 text-[10px]">
+                {participants.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="models"
+              className="h-full flex-1 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            >
+              <Bot className="mr-2 h-4 w-4" />
+              <span>Models</span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent
             value="members"
-            className="h-full flex-1 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            className="mt-0 flex-1 data-[state=inactive]:hidden"
           >
-            <Users className="mr-2 h-4 w-4" />
-            <span>Members</span>
-            <span className="ml-1.5 rounded-full bg-sidebar-accent px-1.5 text-[10px]">
-              {participants.length}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger
+            <ScrollArea className="h-full">
+              <div className="p-3 space-y-1">
+                {/* Online section */}
+                {onlineUsers.size > 0 && (
+                  <div className="mb-3">
+                    <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Online — {onlineUsers.size}
+                    </div>
+                    {sortedParticipants
+                      .filter((p) => onlineUsers.has(p.profile_id))
+                      .map((participant) => (
+                        <ParticipantItem
+                          key={participant.profile_id}
+                          participant={participant}
+                          isOnline
+                          isTyping={typingUsers.has(
+                            participant.profiles?.username,
+                          )}
+                          isOwner={participant.profile_id === ownerId}
+                        />
+                      ))}
+                  </div>
+                )}
+
+                {/* Offline section */}
+                {sortedParticipants.filter(
+                  (p) => !onlineUsers.has(p.profile_id),
+                ).length > 0 && (
+                  <div>
+                    <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Offline
+                    </div>
+                    {sortedParticipants
+                      .filter((p) => !onlineUsers.has(p.profile_id))
+                      .map((participant) => (
+                        <ParticipantItem
+                          key={participant.profile_id}
+                          participant={participant}
+                          isOnline={false}
+                          isTyping={false}
+                          isOwner={participant.profile_id === ownerId}
+                        />
+                      ))}
+                  </div>
+                )}
+
+                {participants.length === 0 && (
+                  <div className="py-10 text-center text-xs text-muted-foreground">
+                    No members yet
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent
             value="models"
-            className="h-full flex-1 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            className="mt-0 flex-1 data-[state=inactive]:hidden"
           >
-            <Bot className="mr-2 h-4 w-4" />
-            <span>Models</span>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent
-          value="members"
-          className="mt-0 flex-1 data-[state=inactive]:hidden"
-        >
-          <ScrollArea className="h-full">
-            <div className="p-3 space-y-1">
-              {/* Online section */}
-              {onlineUsers.size > 0 && (
-                <div className="mb-3">
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Online — {onlineUsers.size}
-                  </div>
-                  {sortedParticipants
-                    .filter((p) => onlineUsers.has(p.profile_id))
-                    .map((participant) => (
-                      <ParticipantItem
-                        key={participant.profile_id}
-                        participant={participant}
-                        isOnline
-                        isTyping={typingUsers.has(
-                          participant.profiles?.username,
-                        )}
-                        isOwner={participant.profile_id === ownerId}
-                      />
-                    ))}
-                </div>
-              )}
-
-              {/* Offline section */}
-              {sortedParticipants.filter((p) => !onlineUsers.has(p.profile_id))
-                .length > 0 && (
-                <div>
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Offline
-                  </div>
-                  {sortedParticipants
-                    .filter((p) => !onlineUsers.has(p.profile_id))
-                    .map((participant) => (
-                      <ParticipantItem
-                        key={participant.profile_id}
-                        participant={participant}
-                        isOnline={false}
-                        isTyping={false}
-                        isOwner={participant.profile_id === ownerId}
-                      />
-                    ))}
-                </div>
-              )}
-
-              {participants.length === 0 && (
-                <div className="py-10 text-center text-xs text-muted-foreground">
-                  No members yet
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </TabsContent>
-
-        <TabsContent
-          value="models"
-          className="mt-0 flex-1 data-[state=inactive]:hidden"
-        >
-          <RoomModelsSidebar roomId={roomId} embedded />
-        </TabsContent>
-      </Tabs>
+            <RoomModelsSidebar roomId={roomId} embedded />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }
