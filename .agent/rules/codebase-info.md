@@ -27,3 +27,5 @@ trigger: always_on
 - Frontend: Next.js 16, key React hooks (`useCallback` for fetch functions), Shadcn UI.
 - Backend: Supabase (Auth, Realtime, DB).
 - Styling: Tailwind CSS.
+
+NEVER RUN THE BROWSER OR BUILDS UNLESS I EXPLICITLY ASK.

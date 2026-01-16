@@ -12,7 +12,7 @@ export async function POST(req: Request) {
       {
         error: "Server Configuration Error: Missing SUPABASE_SERVICE_ROLE_KEY",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
       {
         error: "Server Configuration Error: Missing NEXT_PUBLIC_SUPABASE_URL",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
         autoRefreshToken: false,
         persistSession: false,
       },
-    },
+    }
   );
 
   try {
@@ -52,6 +52,13 @@ export async function POST(req: Request) {
     const response = await generateText({
       model: model,
       messages: messages,
+      system: `You are an AI assistant in "E4Chat", a collaborative multi-model chat application.
+Context:
+- You are participating in a group chat with potentially multiple users and other AI models.
+- Users may address you specifically using "@Mentions" (e.g., @GPT-4o or @Gemini).
+- If you are mentioned, provide a helpful and concise response relevant to the conversation.
+- Be aware that other AIs might also be responding to the same query.
+- Use Markdown for formatting.`,
     });
 
     const aiText = response.text;
@@ -75,7 +82,7 @@ export async function POST(req: Request) {
     console.error("AI Generation Error:", error);
     return Response.json(
       { error: "Failed to generate response" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

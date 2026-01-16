@@ -33,6 +33,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useRenderQueue } from "@/hooks/useRenderQueue";
 import { AVAILABLE_MODELS } from "@/lib/models";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
@@ -76,17 +77,53 @@ interface RoomModel {
   room_id: string;
 }
 
-export default function ChatRoom({ roomId }: { roomId: string }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface ChatRoomProps {
+  roomId: string;
+  initialThinkingModels?: string[];
+  initialMessage?: string;
+  onThinkingModelsConsumed?: () => void;
+}
+
+export default function ChatRoom({
+  roomId,
+  initialThinkingModels = [],
+  initialMessage,
+  onThinkingModelsConsumed,
+}: ChatRoomProps) {
+  // Use the render queue for sequenced message/thinking state
+  const {
+    messages: queuedMessages,
+    thinkingModels,
+    enqueueUserMessage,
+    enqueueAiMessage,
+    setInitialMessages,
+    clearState: clearQueue,
+    resolveOptimisticMessage,
+  } = useRenderQueue(true); // Enable debug logging
+
+  // Convert queued messages to full Message type for rendering
+  const messages = queuedMessages as unknown as Message[];
+
   const [newMessage, setNewMessage] = useState("");
   const [roomDetails, setRoomDetails] = useState<Room | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [roomModels, setRoomModels] = useState<RoomModel[]>([]);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
-  const [isAiThinking, setIsAiThinking] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const roomModelsRef = useRef(roomModels);
+
+  useEffect(() => {
+    roomModelsRef.current = roomModels;
+  }, [roomModels]);
+
+  const animatedMessagesRef = useRef<Set<string>>(new Set());
+  // Map content -> tempId for resolving optimistic updates
+  const pendingOptimisticMessages = useRef<Map<string, string>>(new Map());
+
+  // Track if this is a fresh room with initial data to enqueue
+  const initialDataEnqueued = useRef(false);
 
   // Presence state
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
@@ -99,6 +136,9 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   // Check if user is owner
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+  const [currentUserAvatar, setCurrentUserAvatar] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -108,10 +148,11 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       if (userId) {
         const { data: profile } = await supabase
           .from("profiles")
-          .select("username")
+          .select("username, avatar_url")
           .eq("id", userId)
           .single();
         setCurrentUsername(profile?.username || null);
+        setCurrentUserAvatar(profile?.avatar_url || null);
       }
     });
   }, [supabase]);
@@ -137,7 +178,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       setNewPassword("");
       setIsPasswordDialogOpen(false);
       toast.success(
-        passwordValue ? "Password set successfully!" : "Password removed!",
+        passwordValue ? "Password set successfully!" : "Password removed!"
       );
     }
   };
@@ -158,8 +199,57 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       .eq("room_id", roomId)
       .order("created_at", { ascending: true });
 
-    if (data) setMessages(data);
-  }, [roomId, supabase]);
+    if (data) {
+      // Use the queue's setInitialMessages for proper sequencing
+      setInitialMessages(data);
+    }
+  }, [roomId, supabase, setInitialMessages]);
+
+  const getMentionedModelIds = useCallback(
+    (content: string) => {
+      const lowerContent = content.toLowerCase();
+
+      // Find matched models in the room
+      let mentionedModels = roomModelsRef.current.filter((rm) => {
+        const modelDef = AVAILABLE_MODELS.find((m) => m.id === rm.model_id);
+        if (!modelDef) return false;
+        const nameMatch = lowerContent.includes(
+          `@${modelDef.name.toLowerCase()}`
+        );
+        const idMatch = lowerContent.includes(`@${modelDef.id.toLowerCase()}`);
+        return nameMatch || idMatch;
+      });
+
+      // Deduplicate/Filter shadowed matches
+      mentionedModels = mentionedModels.filter((rm) => {
+        const myModel = AVAILABLE_MODELS.find((m) => m.id === rm.model_id);
+        if (!myModel) return false;
+
+        const isShadowed = mentionedModels.some((other) => {
+          if (other.id === rm.id) return false;
+          const otherModel = AVAILABLE_MODELS.find(
+            (m) => m.id === other.model_id
+          );
+          if (!otherModel) return false;
+
+          if (
+            otherModel.name
+              .toLowerCase()
+              .includes(myModel.name.toLowerCase()) ||
+            otherModel.id.toLowerCase().includes(myModel.id.toLowerCase())
+          ) {
+            return true;
+          }
+          return false;
+        });
+
+        return !isShadowed;
+      });
+
+      return mentionedModels;
+    },
+    [] // stable reference now
+  );
 
   const fetchRoomModels = useCallback(async () => {
     const { data } = await supabase
@@ -178,7 +268,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
         .single();
       return data;
     },
-    [supabase],
+    [supabase]
   );
 
   const fetchParticipants = useCallback(async () => {
@@ -214,7 +304,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     if (lastAtPos !== -1) {
       const before = newMessage.substring(0, lastAtPos);
       const after = newMessage.substring(
-        lastAtPos + 1 + (mentionQuery || "").length,
+        lastAtPos + 1 + (mentionQuery || "").length
       );
       setNewMessage(`${before}@${model.name} ${after}`);
       setMentionQuery(null);
@@ -229,7 +319,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
             (m): m is (typeof AVAILABLE_MODELS)[0] =>
               !!m &&
               (m.name.toLowerCase().includes(mentionQuery.toLowerCase()) ||
-                m.id.toLowerCase().includes(mentionQuery.toLowerCase())),
+                m.id.toLowerCase().includes(mentionQuery.toLowerCase()))
           )
       : [];
 
@@ -278,12 +368,12 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       if (e.key === "ArrowUp") {
         e.preventDefault();
         setMentionIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredModels.length - 1,
+          prev > 0 ? prev - 1 : filteredModels.length - 1
         );
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
         setMentionIndex((prev) =>
-          prev < filteredModels.length - 1 ? prev + 1 : 0,
+          prev < filteredModels.length - 1 ? prev + 1 : 0
         );
       } else if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
@@ -295,19 +385,42 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
   };
 
   // Effects
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initialMessage and initialThinkingModels are intentionally excluded to restrict initialization logic to room changes
   useEffect(() => {
     if (!roomId) return;
 
     // Reset state for new room
-    setMessages([]);
+    clearQueue();
     setRoomDetails(null);
     setParticipants([]);
     setInviteCode(null);
     setRoomModels([]);
     setIsCopied(false);
+    initialDataEnqueued.current = false;
 
     fetchRoomDetails();
-    fetchMessages();
+    fetchMessages().then(() => {
+      // After fetching messages, if we have initial data from NewChatView, enqueue it
+      if (!initialDataEnqueued.current && initialMessage) {
+        initialDataEnqueued.current = true;
+        // The user's message should already be in DB (fetched above)
+        // Now enqueue thinking indicators with a delay
+        if (initialThinkingModels.length > 0) {
+          // Small delay to ensure the message is visually present first
+          setTimeout(() => {
+            enqueueUserMessage(
+              {
+                id: "thinking-trigger",
+                content: "",
+                is_ai: false,
+                created_at: new Date().toISOString(),
+              },
+              initialThinkingModels
+            );
+          }, 100);
+        }
+      }
+    });
     fetchParticipants();
     fetchInviteCode();
     fetchRoomModels();
@@ -327,9 +440,59 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
           const newMsg = payload.new as Message;
           // Fetch sender details for the new message
           fetchMessageSender(newMsg.id).then((fullMsg) => {
-            if (fullMsg) setMessages((prev) => [...prev, fullMsg as Message]);
+            if (fullMsg) {
+              if (fullMsg.is_ai) {
+                // Use queue for AI messages - this handles thinking→message transition
+                enqueueAiMessage({
+                  id: fullMsg.id,
+                  content: fullMsg.content,
+                  is_ai: true,
+                  ai_model_id: fullMsg.ai_model_id,
+                  profiles: fullMsg.profiles,
+                  created_at: fullMsg.created_at,
+                });
+                // Notify parent if all thinking is done - handled by useEffect now
+              } else {
+                // User Message Logic
+
+                // 1. Check if it's OUR message that we already rendered optimistically
+                if (fullMsg.profile_id === currentUserId) {
+                  const tempId = pendingOptimisticMessages.current.get(
+                    fullMsg.content
+                  );
+                  if (tempId) {
+                    // Prevent double animation (blink) by marking new ID as already animated
+                    animatedMessagesRef.current.add(fullMsg.id);
+
+                    // Found it! Seamlessly replace the temp ID with real ID
+                    resolveOptimisticMessage(tempId, {
+                      ...fullMsg,
+                      is_ai: false, // ensure boolean
+                    } as any);
+                    pendingOptimisticMessages.current.delete(fullMsg.content);
+                    return;
+                  }
+                }
+
+                // 2. If not optimized (or from another user), enqueue it
+                // AND check for mentions to show thinking indicators for OTHERS
+                const mentions = getMentionedModelIds(fullMsg.content);
+                const mentionIds = mentions.map((rm) => rm.model_id);
+
+                enqueueUserMessage(
+                  {
+                    id: fullMsg.id,
+                    content: fullMsg.content,
+                    is_ai: false,
+                    profiles: fullMsg.profiles,
+                    created_at: fullMsg.created_at,
+                  },
+                  mentionIds
+                );
+              }
+            }
           });
-        },
+        }
       )
       .subscribe();
 
@@ -346,7 +509,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
         },
         (payload) => {
           setRoomDetails(payload.new as Room);
-        },
+        }
       )
       .subscribe();
 
@@ -363,7 +526,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
         },
         () => {
           fetchRoomModels();
-        },
+        }
       )
       .subscribe();
 
@@ -381,12 +544,34 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     fetchRoomModels,
     fetchMessageSender,
     supabase,
+    clearQueue,
+    enqueueUserMessage,
+    enqueueAiMessage,
+    currentUserId,
+    getMentionedModelIds,
+    resolveOptimisticMessage,
+    // initialMessage and initialThinkingModels are purposely excluded
+    // We only want to process them on MOUNT/ROOM CHANGE, not when parent clears them.
   ]);
+
+  // Separate effect to handle thinking completion
+  const prevThinkingSize = useRef(thinkingModels.size);
+  useEffect(() => {
+    // Only trigger if we went from >0 to 0
+    if (prevThinkingSize.current > 0 && thinkingModels.size === 0) {
+      if (onThinkingModelsConsumed) {
+        onThinkingModelsConsumed();
+      }
+    }
+    prevThinkingSize.current = thinkingModels.size;
+  }, [thinkingModels.size, onThinkingModelsConsumed]);
+
+  // check inside subscription removed since we use this effect now
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Need to scroll on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isAiThinking]);
+  }, [messages, thinkingModels]);
 
   // Presence channel for online status and typing indicators
   useEffect(() => {
@@ -465,6 +650,29 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
     const messageContent = newMessage; // capture for async use
     setNewMessage(""); // Clear input immediately
 
+    // 0. Optimistic Render
+    const tempId = `optimistic-${Date.now()}`;
+    const mentionedModels = getMentionedModelIds(messageContent);
+    const mentionedModelIds = mentionedModels.map((rm) => rm.model_id);
+
+    // Store in pending map for deduplication when realtime arrives
+    pendingOptimisticMessages.current.set(messageContent, tempId);
+
+    enqueueUserMessage(
+      {
+        id: tempId,
+        content: messageContent,
+        profile_id: currentUserId, // Use current user ID for avatar
+        created_at: new Date().toISOString(),
+        is_ai: false,
+        profiles: {
+          username: currentUsername || "You",
+          avatar_url: currentUserAvatar || "",
+        },
+      } as any, // Cast to any to avoid strict type mismatch with queue
+      mentionedModelIds
+    );
+
     const { error } = await supabase.auth.getUser();
     if (error) return;
 
@@ -477,86 +685,9 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
       profile_id: user?.id,
     });
 
-    // 2. Check for AI Mentions
-    // We look for patterns like "@GPT-4o" or "@Claude"
-    // Case insensitive match against available room models
-    const lowerContent = messageContent.toLowerCase();
-
-    // Find matched models in the room
-    // Sort logic: Check longest names first to prevent "GPT-4o" triggering "GPT-4o Mini" if not careful,
-    // though here we are just collecting *all* that match.
-    // The issue is likely: "@GPT-4o" is found. "GPT-4o Mini" contains "GPT-4o"? No, "GPT-4o Mini" contains "GPT-4o".
-    // Wait, if I type "@GPT-4o", does it match "@GPT-4o Mini"?
-    // Name: "GPT-4o Mini", ID: "gpt-4o-mini"
-    // Name: "GPT-4o", ID: "gpt-4o"
-    // Content: "@GPT-4o hello"
-    // includes checks:
-    // "gpt-4o mini".includes("gpt-4o")? YES.
-
-    // Fix: Improve matching to be stricter.
-    // We should check if the content contains `@${name}` where name is the full name,
-    // AND ensuring it's not a substring of another longer mentioned model or followed by other characters if possible.
-    // A simple heuristic: Sort candidates by name length (descending). If a longer one matches, mark that span as 'consumed' or just rely on the fact that the user intentionally typed it.
-
-    // Actually, simpler fix for now involves checking exact ID or Name with boundary safety or just iterating carefully.
-    // But if both respond, it means the logic `lowerContent.includes(...)` is true for both.
-    // lowerContent = "@gpt-4o hello"
-    // model A: "gpt-4o" -> includes("@gpt-4o") -> TRUE
-    // model B: "gpt-4o mini" -> includes("@gpt-4o mini") -> FALSE
-
-    // Wait, if content is "@GPT-4o", Model B (Mini) would NOT match because content doesn't have "@GPT-4o Mini".
-    // BUT if content is "@GPT-4o Mini", Model A (4o) WOULD match because "@GPT-4o" is a substring of "@GPT-4o Mini".
-
-    // SO: If I type "@GPT-4o Mini", BOTH reply.
-    // FIX: We need to filter out 'substring' matches if a longer match exists.
-
-    let mentionedModels = roomModels.filter((rm) => {
-      const modelDef = AVAILABLE_MODELS.find((m) => m.id === rm.model_id);
-      if (!modelDef) return false;
-      const nameMatch = lowerContent.includes(
-        `@${modelDef.name.toLowerCase()}`,
-      );
-      const idMatch = lowerContent.includes(`@${modelDef.id.toLowerCase()}`);
-      return nameMatch || idMatch;
-    });
-
-    // Deduplicate/Filter: If we have multiple matches, and one model's name is a substring of another's, and both are 'mentioned',
-    // likely the user meant the longer specific one.
-    // Example: User typed "@GPT-4o Mini".
-    // Matches: [GPT-4o, GPT-4o Mini].
-    // We want to keep ONLY GPT-4o Mini.
-
-    mentionedModels = mentionedModels.filter((rm) => {
-      const myModel = AVAILABLE_MODELS.find((m) => m.id === rm.model_id);
-      if (!myModel) return false;
-
-      // Check if there is another matched model that is "longer" (more specific) and contains my name
-      // effectively rendering me a 'false positive' substring match.
-      const isShadowed = mentionedModels.some((other) => {
-        if (other.id === rm.id) return false;
-        const otherModel = AVAILABLE_MODELS.find(
-          (m) => m.id === other.model_id,
-        );
-        if (!otherModel) return false;
-
-        // Does the other model's name contain my name?
-        // e.g. "GPT-4o Mini" contains "GPT-4o"
-        if (
-          otherModel.name.toLowerCase().includes(myModel.name.toLowerCase()) ||
-          otherModel.id.toLowerCase().includes(myModel.id.toLowerCase())
-        ) {
-          // And was the strictly longer one actually fully present?
-          // Yes, because it's in 'mentionedModels', so it passed the inclusion check.
-          return true;
-        }
-        return false;
-      });
-
-      return !isShadowed;
-    });
-
+    // 2. Trigger AI logic if mentions exist
     if (mentionedModels.length > 0) {
-      setIsAiThinking(true);
+      // We already enqueued thinking indicators via enqueueUserMessage above
 
       // Trigger AI for each mentioned model (could be multiple!)
       // We'll run them in parallel
@@ -583,14 +714,12 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
             if (!response.ok) {
               throw new Error("AI request failed");
             }
-            // Server inserts response, realtime updates UI
+            // Server inserts response, realtime subscription will call enqueueAiMessage
           } catch (err) {
             console.error("AI Error:", err);
           }
-        }),
+        })
       );
-
-      setIsAiThinking(false);
     }
   }
 
@@ -659,7 +788,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
             <div
               className={cn(
                 "h-2 w-2 rounded-full",
-                roomDetails.is_open ? "bg-emerald-500" : "bg-destructive",
+                roomDetails.is_open ? "bg-emerald-500" : "bg-destructive"
               )}
             />
             {roomDetails.is_open ? "Open" : "Closed"}
@@ -689,7 +818,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                   size="icon"
                   className={cn(
                     "text-muted-foreground hover:text-foreground",
-                    roomDetails.password && "text-emerald-500",
+                    roomDetails.password && "text-emerald-500"
                   )}
                 >
                   {roomDetails.password ? (
@@ -754,7 +883,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                   onClick={toggleRoomStatus}
                   className={cn(
                     "text-muted-foreground hover:text-foreground",
-                    !roomDetails.is_open && "text-destructive",
+                    !roomDetails.is_open && "text-destructive"
                   )}
                 >
                   {roomDetails.is_open ? (
@@ -839,19 +968,26 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                 return (
                   <div
                     key={msg.id}
-                    className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                    ref={() => {
+                      animatedMessagesRef.current.add(msg.id);
+                    }}
+                    className={cn(
+                      "flex gap-3 transition-opacity duration-500",
+                      !animatedMessagesRef.current.has(msg.id) &&
+                        "animate-in fade-in duration-500"
+                    )}
                   >
                     <Avatar
                       className={cn(
                         "mt-1 h-8 w-8 border border-border",
-                        isAi && "ring-1 ring-primary/50",
+                        isAi && "ring-1 ring-primary/50"
                       )}
                     >
                       {isAi ? (
                         <div
                           className={cn(
                             "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
-                            aiModel?.color,
+                            aiModel?.color
                           )}
                         >
                           <Bot className="h-4 w-4 text-white" />
@@ -891,7 +1027,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                           "rounded-lg px-4 py-2 text-sm border",
                           isAi
                             ? "bg-primary/5 border-primary/20 text-foreground"
-                            : "bg-secondary text-secondary-foreground border-border",
+                            : "bg-secondary text-secondary-foreground border-border"
                         )}
                       >
                         <MarkdownContent content={msg.content} />
@@ -901,15 +1037,44 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                 );
               })}
 
-              {isAiThinking && (
-                <div className="flex gap-3 animate-pulse">
-                  <div className="mt-1 h-8 w-8 rounded-full bg-secondary" />
-                  <div className="space-y-2">
-                    <div className="h-4 w-24 rounded bg-secondary" />
-                    <div className="h-10 w-48 rounded bg-secondary" />
-                  </div>
-                </div>
-              )}
+              {thinkingModels.size > 0 &&
+                Array.from(thinkingModels).map((modelId) => {
+                  const model = AVAILABLE_MODELS.find((m) => m.id === modelId);
+                  if (!model) return null;
+                  return (
+                    <div
+                      key={modelId}
+                      className="flex gap-3 animate-in fade-in duration-300"
+                    >
+                      <div
+                        className={cn(
+                          "mt-1 h-8 w-8 rounded-full flex items-center justify-center ring-1 ring-primary/50",
+                          model.color
+                        )}
+                      >
+                        <Bot className="h-4 w-4 text-white" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">
+                            {model.name}
+                          </span>
+                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
+                            AI
+                          </span>
+                        </div>
+                        <div className="rounded-lg px-4 py-2 text-sm border bg-primary/5 border-primary/20 text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:0ms]" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:150ms]" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:300ms]" />
+                            <span className="ml-2 text-xs">Thinking...</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
 
               {/* Typing indicator */}
               {typingUsers.size > 0 && (
@@ -945,7 +1110,7 @@ export default function ChatRoom({ roomId }: { roomId: string }) {
                         "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors text-left",
                         idx === mentionIndex
                           ? "bg-accent text-accent-foreground"
-                          : "text-popover-foreground hover:bg-accent/50",
+                          : "text-popover-foreground hover:bg-accent/50"
                       )}
                     >
                       <div

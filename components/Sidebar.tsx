@@ -67,18 +67,18 @@ interface Profile {
 export default function Sidebar({
   currentRoomId,
   onRoomSelect,
+  onNewChat,
 }: {
   currentRoomId?: string;
   onRoomSelect?: (roomId: string) => void;
+  onNewChat?: () => void;
 }) {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [roomPassword, setRoomPassword] = useState("");
   const [isPasswordRequired, setIsPasswordRequired] = useState(false);
-  const [newRoomName, setNewRoomName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [roomToDelete, setRoomToDelete] = useState<string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -207,37 +207,6 @@ export default function Sidebar({
     } finally {
       setIsLoading(false);
     }
-  }
-
-  async function handleCreateRoom() {
-    if (!newRoomName || !profile) return;
-    setIsLoading(true);
-
-    // Slug generation (simple version)
-    const slug =
-      newRoomName.toLowerCase().replace(/[^a-z0-9]+/g, "-") +
-      "-" +
-      Math.random().toString(36).substring(7);
-
-    const { data } = await supabase
-      .from("rooms")
-      .insert({
-        slug: slug,
-        name: newRoomName, // Store the display name
-        created_by: profile.id,
-        is_open: false, // Closed/Private by default
-      })
-      .select()
-      .single();
-
-    if (data) {
-      setNewRoomName("");
-      setIsCreateDialogOpen(false);
-      fetchRooms();
-      if (onRoomSelect) onRoomSelect(data.id);
-    }
-
-    setIsLoading(false);
   }
 
   async function handleDeleteRoom(roomId: string) {
@@ -429,41 +398,13 @@ export default function Sidebar({
             </DialogContent>
           </Dialog>
 
-          <Dialog
-            open={isCreateDialogOpen}
-            onOpenChange={setIsCreateDialogOpen}
+          <Button
+            className="w-full justify-start gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={() => onNewChat?.()}
           >
-            <DialogTrigger asChild>
-              <Button className="w-full justify-start gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
-                <Plus className="h-4 w-4" />
-                Create Room
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="border-border bg-background text-foreground sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Create a New Room</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Input
-                    placeholder="Room Name"
-                    value={newRoomName}
-                    onChange={(e) => setNewRoomName(e.target.value)}
-                    className="border-input bg-secondary text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  onClick={handleCreateRoom}
-                  disabled={isLoading || !newRoomName}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                >
-                  {isLoading ? "Creating..." : "Create Room"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+            <Plus className="h-4 w-4" />
+            New Chat
+          </Button>
         </div>
       ) : (
         // Collapsed state - show icon buttons
@@ -479,9 +420,9 @@ export default function Sidebar({
           </Button>
           <Button
             size="icon"
-            onClick={() => setIsCreateDialogOpen(true)}
+            onClick={() => onNewChat?.()}
             className="h-10 w-10"
-            title="Create Room"
+            title="New Chat"
           >
             <Plus className="h-4 w-4" />
           </Button>
