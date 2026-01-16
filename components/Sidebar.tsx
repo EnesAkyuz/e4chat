@@ -5,7 +5,6 @@ import {
   ChevronRight,
   DoorClosed,
   DoorOpen,
-  Hash,
   Key,
   LogOut,
   MessageSquare,
@@ -109,14 +108,27 @@ export default function Sidebar({
     } = await supabase.auth.getUser();
     if (!user) return;
 
-    // We fetch rooms we have access to via the security function logic
-    // But since we can't call the function directly in a clean select for list,
-    // we rely on RLS allowing us to select * from rooms.
+    // We need to fetch rooms that we either created OR are a participant in.
+    // 1. Get my participations
+    const { data: participations } = await supabase
+      .from("room_participants")
+      .select("room_id")
+      .eq("profile_id", user.id);
+
+    const myRoomIds = new Set(participations?.map((p) => p.room_id) || []);
+
+    // 2. Get rooms
     const { data } = await supabase
       .from("rooms")
       .select("*")
       .order("created_at", { ascending: false });
-    if (data) setRooms(data);
+
+    if (data) {
+      const visibleRooms = data.filter(
+        (r) => r.created_by === user.id || myRoomIds.has(r.id),
+      );
+      setRooms(visibleRooms);
+    }
   }, [supabase]);
 
   useEffect(() => {

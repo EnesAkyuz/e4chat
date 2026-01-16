@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type AIModel, AVAILABLE_MODELS } from "@/lib/models";
-import { cn } from "@/lib/utils";
+import { cn, getBotAvatarUrl } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
 
 interface RoomModel {
@@ -174,6 +174,7 @@ export function RoomModelsSidebar({
               >
                 <div className="flex items-center gap-2 overflow-hidden">
                   <Avatar className="h-6 w-6 border border-sidebar-border">
+                    <AvatarImage src={getBotAvatarUrl(modelDef.id)} />
                     <AvatarFallback
                       className={cn("text-[10px] text-white", modelDef.color)}
                     >

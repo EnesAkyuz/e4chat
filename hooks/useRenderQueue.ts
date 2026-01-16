@@ -179,7 +179,7 @@ export function useRenderQueue(debug = false) {
     queueRef.current = [];
   }, [log]);
 
-  const getLogs = useCallback(() => logRef.current, []);
+  const _getLogs = useCallback(() => logRef.current, []);
 
   const resolveOptimisticMessage = useCallback(
     (tempId: string, realMessage: QueueState["messages"][0]) => {

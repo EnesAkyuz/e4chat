@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useRenderQueue } from "@/hooks/useRenderQueue";
 import { AVAILABLE_MODELS } from "@/lib/models";
-import { cn } from "@/lib/utils";
+import { cn, getBotAvatarUrl } from "@/lib/utils";
 import { createClient } from "@/utils/supabase/client";
 import { RoomSidebar } from "./RoomSidebar";
 
@@ -82,6 +82,7 @@ interface ChatRoomProps {
   initialThinkingModels?: string[];
   initialMessage?: string;
   onThinkingModelsConsumed?: () => void;
+  onKicked?: () => void;
 }
 
 export default function ChatRoom({
@@ -89,6 +90,7 @@ export default function ChatRoom({
   initialThinkingModels = [],
   initialMessage,
   onThinkingModelsConsumed,
+  onKicked,
 }: ChatRoomProps) {
   // Use the render queue for sequenced message/thinking state
   const {
@@ -163,6 +165,13 @@ export default function ChatRoom({
   const isOwner = roomDetails && currentUserId === roomDetails.created_by;
   const canSend = roomDetails && (roomDetails.is_open || isOwner);
 
+  useEffect(() => {
+    if (roomDetails && currentUserId && !roomDetails.is_open && !isOwner) {
+      toast.error("Room has been closed.");
+      onKicked?.();
+    }
+  }, [roomDetails, currentUserId, isOwner, onKicked]);
+
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
 
@@ -192,8 +201,21 @@ export default function ChatRoom({
       .select("*")
       .eq("id", roomId)
       .single();
-    setRoomDetails(data);
-  }, [roomId, supabase]);
+
+    if (data) {
+      setRoomDetails(data);
+    } else {
+      // If data is null, it means the room doesn't exist or RLS hid it (closed)
+      // Check if we previously had details (meaning we were kicked)
+      setRoomDetails((prev) => {
+        if (prev) {
+          toast.error("Room unavailable.");
+          onKicked?.();
+        }
+        return null; // Update state to null regardless
+      });
+    }
+  }, [roomId, supabase, onKicked]);
 
   const fetchMessages = useCallback(async () => {
     const { data } = await supabase
@@ -532,8 +554,13 @@ export default function ChatRoom({
           table: "rooms",
           filter: `id=eq.${roomId}`,
         },
-        (payload) => {
-          setRoomDetails(payload.new as Room);
+        async (payload) => {
+          // If we have payload, use it for immediate feedback
+          if (payload.new) {
+            setRoomDetails(payload.new as Room);
+          }
+          // Also fetch fresh details to ensure consistency (and hit RLS if access lost)
+          await fetchRoomDetails();
         },
       )
       .subscribe();
@@ -555,10 +582,48 @@ export default function ChatRoom({
       )
       .subscribe();
 
+    // 4. Subscribe to Room Participants (to keep member list fresh and detect kicks)
+    const participantsChannel = supabase
+      .channel(`room_participants_chat:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "room_participants",
+          filter: `room_id=eq.${roomId}`,
+        },
+        (payload) => {
+          // If the deleted participant is the current user, they were kicked
+          const deleted = payload.old as { profile_id?: string };
+          if (deleted?.profile_id === currentUserId) {
+            toast.error("You have been removed from this room.");
+            onKicked?.();
+            return;
+          }
+          // Otherwise, just refresh the participant list
+          fetchParticipants();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "room_participants",
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          fetchParticipants();
+        },
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(modelsChannel);
+      supabase.removeChannel(participantsChannel);
     };
   }, [
     roomId,
@@ -575,6 +640,7 @@ export default function ChatRoom({
     currentUserId,
     getMentionedModelIds,
     resolveOptimisticMessage,
+    onKicked,
     // initialMessage and initialThinkingModels are purposely excluded
     // We only want to process them on MOUNT/ROOM CHANGE, not when parent clears them.
   ]);
@@ -761,7 +827,7 @@ export default function ChatRoom({
   }
 
   async function toggleRoomStatus() {
-    if (!roomDetails) return;
+    if (!roomDetails || !currentUserId) return;
     const newStatus = !roomDetails.is_open;
 
     const { error } = await supabase
@@ -773,6 +839,15 @@ export default function ChatRoom({
       alert(`Error toggling room: ${error.message}`);
     } else {
       setRoomDetails({ ...roomDetails, is_open: newStatus });
+
+      // If closing the room, kick everyone else out
+      if (!newStatus) {
+        await supabase
+          .from("room_participants")
+          .delete()
+          .eq("room_id", roomId)
+          .neq("profile_id", currentUserId); // Keep the owner
+      }
     }
   }
 
@@ -844,145 +919,150 @@ export default function ChatRoom({
         <div className="flex items-center gap-3">
           {/* Room Controls */}
           {/* Room Controls - Set Password */}
+          {/* Room Controls - Set Password */}
           {isOwner && (
-            <Dialog
-              open={isPasswordDialogOpen}
-              onOpenChange={setIsPasswordDialogOpen}
-            >
-              <DialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "text-muted-foreground hover:text-foreground",
-                    roomDetails.password && "text-emerald-500",
-                  )}
-                >
-                  {roomDetails.password ? (
-                    <Lock className="h-5 w-5" />
-                  ) : (
-                    <LockOpen className="h-5 w-5" />
-                  )}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Set Room Password</DialogTitle>
-                  <DialogDescription>
-                    Require a password for new members to join this room. Leave
-                    empty to remove.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="password" className="text-right">
-                      Password
-                    </Label>
-                    <Input
-                      id="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      className="col-span-3"
-                      type="password"
-                      placeholder="Enter new password (or blank to remove)"
-                    />
+            <>
+              <Dialog
+                open={isPasswordDialogOpen}
+                onOpenChange={setIsPasswordDialogOpen}
+              >
+                <DialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      "text-muted-foreground hover:text-foreground",
+                      roomDetails.password && "text-emerald-500",
+                    )}
+                  >
+                    {roomDetails.password ? (
+                      <Lock className="h-5 w-5" />
+                    ) : (
+                      <LockOpen className="h-5 w-5" />
+                    )}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Set Room Password</DialogTitle>
+                    <DialogDescription>
+                      Require a password for new members to join this room.
+                      Leave empty to remove.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="password" className="text-right">
+                        Password
+                      </Label>
+                      <Input
+                        id="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="col-span-3"
+                        type="password"
+                        placeholder="Enter new password (or blank to remove)"
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter className="gap-2 sm:gap-0">
+                    {roomDetails.password && (
+                      <Button
+                        variant="destructive"
+                        onClick={() => {
+                          setNewPassword("");
+                          handleSetPassword();
+                        }}
+                      >
+                        Remove Password
+                      </Button>
+                    )}
+                    <Button
+                      onClick={handleSetPassword}
+                      disabled={!newPassword.trim()}
+                    >
+                      {roomDetails.password
+                        ? "Update Password"
+                        : "Set Password"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={toggleRoomStatus}
+                      className={cn(
+                        "text-muted-foreground hover:text-foreground",
+                        !roomDetails.is_open && "text-destructive",
+                      )}
+                    >
+                      {roomDetails.is_open ? (
+                        <ToggleRight className="h-6 w-6 text-emerald-500" />
+                      ) : (
+                        <ToggleLeft className="h-6 w-6" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>
+                      {roomDetails.is_open
+                        ? "Close Room (Lock Access)"
+                        : "Open Room (Allow Access)"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              {/* Invite Code Display */}
+              {inviteCode ? (
+                <div className="group flex items-center gap-2 rounded-md border border-border bg-secondary px-3 py-1.5">
+                  <span className="text-xs font-mono tracking-wider text-muted-foreground">
+                    CODE:
+                  </span>
+                  <span className="text-sm font-bold text-primary">
+                    {inviteCode}
+                  </span>
+                  <div className="ml-1 flex items-center border-l border-border pl-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                      onClick={copyCode}
+                      title="Copy Code"
+                    >
+                      {isCopied ? (
+                        <Check className="h-3 w-3" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                      onClick={generateInviteCode}
+                      title="Regenerate Code"
+                    >
+                      <RefreshCcw className="h-3 w-3" />
+                    </Button>
                   </div>
                 </div>
-                <DialogFooter className="gap-2 sm:gap-0">
-                  {roomDetails.password && (
-                    <Button
-                      variant="destructive"
-                      onClick={() => {
-                        setNewPassword("");
-                        handleSetPassword();
-                      }}
-                    >
-                      Remove Password
-                    </Button>
-                  )}
-                  <Button
-                    onClick={handleSetPassword}
-                    disabled={!newPassword.trim()}
-                  >
-                    {roomDetails.password ? "Update Password" : "Set Password"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
-
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
+              ) : (
                 <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleRoomStatus}
-                  className={cn(
-                    "text-muted-foreground hover:text-foreground",
-                    !roomDetails.is_open && "text-destructive",
-                  )}
-                >
-                  {roomDetails.is_open ? (
-                    <ToggleRight className="h-6 w-6 text-emerald-500" />
-                  ) : (
-                    <ToggleLeft className="h-6 w-6" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>
-                  {roomDetails.is_open
-                    ? "Close Room (Lock Access)"
-                    : "Open Room (Allow Access)"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          {/* Invite Code Display */}
-          {inviteCode ? (
-            <div className="flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 border border-border group">
-              <span className="text-xs font-mono text-muted-foreground tracking-wider">
-                CODE:
-              </span>
-              <span className="text-sm font-bold text-primary">
-                {inviteCode}
-              </span>
-              <div className="flex items-center border-l border-border pl-1 ml-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5 text-muted-foreground hover:text-foreground"
-                  onClick={copyCode}
-                  title="Copy Code"
-                >
-                  {isCopied ? (
-                    <Check className="h-3 w-3" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                  variant="outline"
+                  size="sm"
                   onClick={generateInviteCode}
-                  title="Regenerate Code"
+                  className="h-8 text-xs"
                 >
-                  <RefreshCcw className="h-3 w-3" />
+                  Generate Code
                 </Button>
-              </div>
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={generateInviteCode}
-              className="h-8 text-xs"
-            >
-              Generate Code
-            </Button>
+              )}
+            </>
           )}
 
           <Button variant="ghost" size="icon">
@@ -1021,14 +1101,19 @@ export default function ChatRoom({
                       )}
                     >
                       {isAi ? (
-                        <div
-                          className={cn(
-                            "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
-                            aiModel?.color,
-                          )}
-                        >
-                          <Bot className="h-4 w-4 text-white" />
-                        </div>
+                        <>
+                          <AvatarImage
+                            src={getBotAvatarUrl(msg.ai_model_id || "bot")}
+                          />
+                          <AvatarFallback
+                            className={cn(
+                              "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
+                              aiModel?.color,
+                            )}
+                          >
+                            <Bot className="h-4 w-4 text-white" />
+                          </AvatarFallback>
+                        </>
                       ) : (
                         <>
                           <AvatarImage src={msg.profiles?.avatar_url} />
@@ -1083,14 +1168,19 @@ export default function ChatRoom({
                       key={modelId}
                       className="flex gap-3 animate-in fade-in duration-300"
                     >
-                      <div
-                        className={cn(
-                          "mt-1 h-8 w-8 rounded-full flex items-center justify-center ring-1 ring-primary/50",
-                          model.color,
-                        )}
+                      <Avatar
+                        className={cn("mt-1 h-8 w-8 ring-1 ring-primary/50")}
                       >
-                        <Bot className="h-4 w-4 text-white" />
-                      </div>
+                        <AvatarImage src={getBotAvatarUrl(modelId)} />
+                        <AvatarFallback
+                          className={cn(
+                            "flex h-full w-full items-center justify-center",
+                            model.color,
+                          )}
+                        >
+                          <Bot className="h-4 w-4 text-white" />
+                        </AvatarFallback>
+                      </Avatar>
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground">
@@ -1195,6 +1285,7 @@ export default function ChatRoom({
           onlineUsers={onlineUsers}
           typingUsers={new Set(typingUsers.map((u) => u.username))}
           ownerId={roomDetails.created_by}
+          isOwner={isOwner || false}
         />
       </div>
     </div>

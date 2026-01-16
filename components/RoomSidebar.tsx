@@ -1,12 +1,27 @@
 "use client";
 
-import { Bot, ChevronLeft, ChevronRight, Crown, Users } from "lucide-react";
-import { useState } from "react";
+import {
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Crown,
+  Users,
+  UserX,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/utils/supabase/client";
 import { RoomModelsSidebar } from "./RoomModelsSidebar";
 
 interface Participant {
@@ -24,6 +39,7 @@ interface RoomSidebarProps {
   onlineUsers: Set<string>;
   typingUsers: Set<string>;
   ownerId: string;
+  isOwner: boolean;
 }
 
 export function RoomSidebar({
@@ -32,7 +48,23 @@ export function RoomSidebar({
   onlineUsers,
   typingUsers,
   ownerId,
+  isOwner,
 }: RoomSidebarProps) {
+  const supabase = useMemo(() => createClient(), []);
+
+  const handleKickUser = async (participantId: string, username: string) => {
+    const { error } = await supabase
+      .from("room_participants")
+      .delete()
+      .eq("room_id", roomId)
+      .eq("profile_id", participantId);
+
+    if (error) {
+      toast.error(`Failed to kick ${username}: ${error.message}`);
+    } else {
+      toast.success(`${username} has been kicked from the room.`);
+    }
+  };
   const [activeTab, setActiveTab] = useState<"members" | "models">("members");
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -158,6 +190,15 @@ export function RoomSidebar({
                             participant.profiles?.username,
                           )}
                           isOwner={participant.profile_id === ownerId}
+                          canKick={
+                            isOwner && participant.profile_id !== ownerId
+                          }
+                          onKick={() =>
+                            handleKickUser(
+                              participant.profile_id,
+                              participant.profiles?.username || "User",
+                            )
+                          }
                         />
                       ))}
                   </div>
@@ -180,6 +221,15 @@ export function RoomSidebar({
                           isOnline={false}
                           isTyping={false}
                           isOwner={participant.profile_id === ownerId}
+                          canKick={
+                            isOwner && participant.profile_id !== ownerId
+                          }
+                          onKick={() =>
+                            handleKickUser(
+                              participant.profile_id,
+                              participant.profiles?.username || "User",
+                            )
+                          }
                         />
                       ))}
                   </div>
@@ -211,16 +261,20 @@ function ParticipantItem({
   isOnline,
   isTyping,
   isOwner,
+  canKick,
+  onKick,
 }: {
   participant: Participant;
   isOnline: boolean;
   isTyping: boolean;
   isOwner: boolean;
+  canKick: boolean;
+  onKick?: () => void;
 }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent",
+        "group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent",
         !isOnline && "opacity-50",
       )}
     >
@@ -257,6 +311,30 @@ function ParticipantItem({
           </div>
         )}
       </div>
+
+      {/* Kick button - only visible to owner, for non-owner participants */}
+      {canKick && onKick && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onKick();
+                }}
+                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              >
+                <UserX className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">
+              <p>Kick from room</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
     </div>
   );
 }

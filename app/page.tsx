@@ -52,6 +52,7 @@ export default function Home() {
             initialThinkingModels={pendingModelIds}
             initialMessage={initialMessage || undefined}
             onThinkingModelsConsumed={handleThinkingModelsConsumed}
+            onKicked={handleNewChat}
           />
         ) : (
           <NewChatView onRoomCreated={handleRoomCreated} />
