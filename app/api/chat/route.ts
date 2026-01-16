@@ -12,7 +12,7 @@ export async function POST(req: Request) {
       {
         error: "Server Configuration Error: Missing SUPABASE_SERVICE_ROLE_KEY",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
       {
         error: "Server Configuration Error: Missing NEXT_PUBLIC_SUPABASE_URL",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
         autoRefreshToken: false,
         persistSession: false,
       },
-    }
+    },
   );
 
   try {
@@ -82,7 +82,7 @@ Context:
     console.error("AI Generation Error:", error);
     return Response.json(
       { error: "Failed to generate response" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

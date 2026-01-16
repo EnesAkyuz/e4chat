@@ -127,8 +127,11 @@ export default function ChatRoom({
 
   // Presence state
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
-  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [typingUsers, setTypingUsers] = useState<
+    { username: string; timestamp: number }[]
+  >([]);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isTypingRef = useRef(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const supabase = useMemo(() => createClient(), []);
@@ -137,7 +140,7 @@ export default function ChatRoom({
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
   const [currentUserAvatar, setCurrentUserAvatar] = useState<string | null>(
-    null
+    null,
   );
 
   useEffect(() => {
@@ -178,7 +181,7 @@ export default function ChatRoom({
       setNewPassword("");
       setIsPasswordDialogOpen(false);
       toast.success(
-        passwordValue ? "Password set successfully!" : "Password removed!"
+        passwordValue ? "Password set successfully!" : "Password removed!",
       );
     }
   };
@@ -214,7 +217,7 @@ export default function ChatRoom({
         const modelDef = AVAILABLE_MODELS.find((m) => m.id === rm.model_id);
         if (!modelDef) return false;
         const nameMatch = lowerContent.includes(
-          `@${modelDef.name.toLowerCase()}`
+          `@${modelDef.name.toLowerCase()}`,
         );
         const idMatch = lowerContent.includes(`@${modelDef.id.toLowerCase()}`);
         return nameMatch || idMatch;
@@ -228,7 +231,7 @@ export default function ChatRoom({
         const isShadowed = mentionedModels.some((other) => {
           if (other.id === rm.id) return false;
           const otherModel = AVAILABLE_MODELS.find(
-            (m) => m.id === other.model_id
+            (m) => m.id === other.model_id,
           );
           if (!otherModel) return false;
 
@@ -248,7 +251,7 @@ export default function ChatRoom({
 
       return mentionedModels;
     },
-    [] // stable reference now
+    [], // stable reference now
   );
 
   const fetchRoomModels = useCallback(async () => {
@@ -268,7 +271,7 @@ export default function ChatRoom({
         .single();
       return data;
     },
-    [supabase]
+    [supabase],
   );
 
   const fetchParticipants = useCallback(async () => {
@@ -304,7 +307,7 @@ export default function ChatRoom({
     if (lastAtPos !== -1) {
       const before = newMessage.substring(0, lastAtPos);
       const after = newMessage.substring(
-        lastAtPos + 1 + (mentionQuery || "").length
+        lastAtPos + 1 + (mentionQuery || "").length,
       );
       setNewMessage(`${before}@${model.name} ${after}`);
       setMentionQuery(null);
@@ -319,7 +322,7 @@ export default function ChatRoom({
             (m): m is (typeof AVAILABLE_MODELS)[0] =>
               !!m &&
               (m.name.toLowerCase().includes(mentionQuery.toLowerCase()) ||
-                m.id.toLowerCase().includes(mentionQuery.toLowerCase()))
+                m.id.toLowerCase().includes(mentionQuery.toLowerCase())),
           )
       : [];
 
@@ -328,27 +331,49 @@ export default function ChatRoom({
     setNewMessage(val);
 
     // Broadcast typing status
-    if (val.trim() && currentUserId && currentUsername) {
+    if (currentUserId && currentUsername) {
       const presenceChannel = supabase.channel(`presence:${roomId}`);
-      presenceChannel.track({
-        user_id: currentUserId,
-        username: currentUsername,
-        is_typing: true,
-      });
 
-      // Clear previous timeout
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
+      // If text is not empty and we haven't sent "typing: true" yet (or effectively recently)
+      if (val.trim()) {
+        if (!isTypingRef.current) {
+          presenceChannel.track({
+            user_id: currentUserId,
+            username: currentUsername,
+            is_typing: true,
+            typing_timestamp: Date.now(),
+          });
+          isTypingRef.current = true;
+        }
+
+        // Clear previous "stop typing" timeout
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+        }
+
+        // Set timeout to stop typing after 2 seconds of inactivity
+        typingTimeoutRef.current = setTimeout(() => {
+          presenceChannel.track({
+            user_id: currentUserId,
+            username: currentUsername,
+            is_typing: false,
+          });
+          isTypingRef.current = false;
+        }, 2000);
+      } else {
+        // If message is cleared, stop typing immediately
+        if (isTypingRef.current) {
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+          }
+          presenceChannel.track({
+            user_id: currentUserId,
+            username: currentUsername,
+            is_typing: false,
+          });
+          isTypingRef.current = false;
+        }
       }
-
-      // Set timeout to stop typing after 2 seconds of inactivity
-      typingTimeoutRef.current = setTimeout(() => {
-        presenceChannel.track({
-          user_id: currentUserId,
-          username: currentUsername,
-          is_typing: false,
-        });
-      }, 2000);
     }
 
     const lastAtPos = val.lastIndexOf("@");
@@ -368,12 +393,12 @@ export default function ChatRoom({
       if (e.key === "ArrowUp") {
         e.preventDefault();
         setMentionIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredModels.length - 1
+          prev > 0 ? prev - 1 : filteredModels.length - 1,
         );
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
         setMentionIndex((prev) =>
-          prev < filteredModels.length - 1 ? prev + 1 : 0
+          prev < filteredModels.length - 1 ? prev + 1 : 0,
         );
       } else if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
@@ -415,7 +440,7 @@ export default function ChatRoom({
                 is_ai: false,
                 created_at: new Date().toISOString(),
               },
-              initialThinkingModels
+              initialThinkingModels,
             );
           }, 100);
         }
@@ -458,7 +483,7 @@ export default function ChatRoom({
                 // 1. Check if it's OUR message that we already rendered optimistically
                 if (fullMsg.profile_id === currentUserId) {
                   const tempId = pendingOptimisticMessages.current.get(
-                    fullMsg.content
+                    fullMsg.content,
                   );
                   if (tempId) {
                     // Prevent double animation (blink) by marking new ID as already animated
@@ -487,12 +512,12 @@ export default function ChatRoom({
                     profiles: fullMsg.profiles,
                     created_at: fullMsg.created_at,
                   },
-                  mentionIds
+                  mentionIds,
                 );
               }
             }
           });
-        }
+        },
       )
       .subscribe();
 
@@ -509,7 +534,7 @@ export default function ChatRoom({
         },
         (payload) => {
           setRoomDetails(payload.new as Room);
-        }
+        },
       )
       .subscribe();
 
@@ -526,7 +551,7 @@ export default function ChatRoom({
         },
         () => {
           fetchRoomModels();
-        }
+        },
       )
       .subscribe();
 
@@ -585,7 +610,7 @@ export default function ChatRoom({
       .on("presence", { event: "sync" }, () => {
         const state = presenceChannel.presenceState();
         const online = new Set<string>();
-        const typing = new Set<string>();
+        const typingMap = new Map<string, number>(); // username -> timestamp
 
         for (const presences of Object.values(state)) {
           for (const p of presences) {
@@ -593,21 +618,35 @@ export default function ChatRoom({
               user_id: string;
               username: string;
               is_typing: boolean;
+              typing_timestamp?: number;
             };
             online.add(presence.user_id);
             if (presence.is_typing && presence.user_id !== currentUserId) {
-              typing.add(presence.username);
+              const ts = presence.typing_timestamp || 0;
+              // Keep only the latest timestamp if multiple presences for same user (unlikely but safe)
+              const existing = typingMap.get(presence.username) || 0;
+              if (ts >= existing) {
+                typingMap.set(presence.username, ts);
+              }
             }
           }
         }
 
         setOnlineUsers(online);
-        setTypingUsers(typing);
+        setTypingUsers(
+          Array.from(typingMap.entries())
+            .map(([username, timestamp]) => ({ username, timestamp }))
+            .sort((a, b) => a.timestamp - b.timestamp), // Sort by timestamp ascending (oldest first, so last is newest)
+        );
       })
       .on("presence", { event: "join" }, ({ newPresences }) => {
         for (const p of newPresences) {
           const presence = p as unknown as { user_id: string };
-          setOnlineUsers((prev) => new Set(prev).add(presence.user_id));
+          setOnlineUsers((prev) => {
+            const next = new Set(prev);
+            next.add(presence.user_id);
+            return next;
+          });
         }
       })
       .on("presence", { event: "leave" }, ({ leftPresences }) => {
@@ -621,11 +660,9 @@ export default function ChatRoom({
             next.delete(presence.user_id);
             return next;
           });
-          setTypingUsers((prev) => {
-            const next = new Set(prev);
-            next.delete(presence.username);
-            return next;
-          });
+          setTypingUsers((prev) =>
+            prev.filter((u) => u.username !== presence.username),
+          );
         }
       })
       .subscribe(async (status) => {
@@ -670,7 +707,7 @@ export default function ChatRoom({
           avatar_url: currentUserAvatar || "",
         },
       } as any, // Cast to any to avoid strict type mismatch with queue
-      mentionedModelIds
+      mentionedModelIds,
     );
 
     const { error } = await supabase.auth.getUser();
@@ -718,7 +755,7 @@ export default function ChatRoom({
           } catch (err) {
             console.error("AI Error:", err);
           }
-        })
+        }),
       );
     }
   }
@@ -788,7 +825,7 @@ export default function ChatRoom({
             <div
               className={cn(
                 "h-2 w-2 rounded-full",
-                roomDetails.is_open ? "bg-emerald-500" : "bg-destructive"
+                roomDetails.is_open ? "bg-emerald-500" : "bg-destructive",
               )}
             />
             {roomDetails.is_open ? "Open" : "Closed"}
@@ -818,7 +855,7 @@ export default function ChatRoom({
                   size="icon"
                   className={cn(
                     "text-muted-foreground hover:text-foreground",
-                    roomDetails.password && "text-emerald-500"
+                    roomDetails.password && "text-emerald-500",
                   )}
                 >
                   {roomDetails.password ? (
@@ -883,7 +920,7 @@ export default function ChatRoom({
                   onClick={toggleRoomStatus}
                   className={cn(
                     "text-muted-foreground hover:text-foreground",
-                    !roomDetails.is_open && "text-destructive"
+                    !roomDetails.is_open && "text-destructive",
                   )}
                 >
                   {roomDetails.is_open ? (
@@ -974,20 +1011,20 @@ export default function ChatRoom({
                     className={cn(
                       "flex gap-3 transition-opacity duration-500",
                       !animatedMessagesRef.current.has(msg.id) &&
-                        "animate-in fade-in duration-500"
+                        "animate-in fade-in duration-500",
                     )}
                   >
                     <Avatar
                       className={cn(
                         "mt-1 h-8 w-8 border border-border",
-                        isAi && "ring-1 ring-primary/50"
+                        isAi && "ring-1 ring-primary/50",
                       )}
                     >
                       {isAi ? (
                         <div
                           className={cn(
                             "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
-                            aiModel?.color
+                            aiModel?.color,
                           )}
                         >
                           <Bot className="h-4 w-4 text-white" />
@@ -1027,7 +1064,7 @@ export default function ChatRoom({
                           "rounded-lg px-4 py-2 text-sm border",
                           isAi
                             ? "bg-primary/5 border-primary/20 text-foreground"
-                            : "bg-secondary text-secondary-foreground border-border"
+                            : "bg-secondary text-secondary-foreground border-border",
                         )}
                       >
                         <MarkdownContent content={msg.content} />
@@ -1049,7 +1086,7 @@ export default function ChatRoom({
                       <div
                         className={cn(
                           "mt-1 h-8 w-8 rounded-full flex items-center justify-center ring-1 ring-primary/50",
-                          model.color
+                          model.color,
                         )}
                       >
                         <Bot className="h-4 w-4 text-white" />
@@ -1077,7 +1114,7 @@ export default function ChatRoom({
                 })}
 
               {/* Typing indicator */}
-              {typingUsers.size > 0 && (
+              {typingUsers.length > 0 && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in">
                   <div className="flex gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
@@ -1085,8 +1122,8 @@ export default function ChatRoom({
                     <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
                   </div>
                   <span>
-                    {Array.from(typingUsers).join(", ")}{" "}
-                    {typingUsers.size === 1 ? "is" : "are"} typing...
+                    {/* Last one wins: show only the most recent typist */}
+                    {typingUsers[typingUsers.length - 1].username} is typing...
                   </span>
                 </div>
               )}
@@ -1110,7 +1147,7 @@ export default function ChatRoom({
                         "flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors text-left",
                         idx === mentionIndex
                           ? "bg-accent text-accent-foreground"
-                          : "text-popover-foreground hover:bg-accent/50"
+                          : "text-popover-foreground hover:bg-accent/50",
                       )}
                     >
                       <div
@@ -1156,7 +1193,7 @@ export default function ChatRoom({
           roomId={roomId}
           participants={participants}
           onlineUsers={onlineUsers}
-          typingUsers={typingUsers}
+          typingUsers={new Set(typingUsers.map((u) => u.username))}
           ownerId={roomDetails.created_by}
         />
       </div>

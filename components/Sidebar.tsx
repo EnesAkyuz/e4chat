@@ -3,6 +3,8 @@
 import {
   ChevronLeft,
   ChevronRight,
+  DoorClosed,
+  DoorOpen,
   Hash,
   Key,
   LogOut,
@@ -456,7 +458,13 @@ export default function Sidebar({
                   onRoomSelect?.(room.id);
                 }
               }}
-              title={isCollapsed ? room.name || room.slug : undefined}
+              title={
+                isCollapsed
+                  ? `${room.name || room.slug} (${
+                      room.is_open ? "Open" : "Closed"
+                    })`
+                  : undefined
+              }
               className={cn(
                 "group flex cursor-pointer items-center rounded-lg transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 isCollapsed
@@ -467,7 +475,11 @@ export default function Sidebar({
                   : "text-muted-foreground",
               )}
             >
-              <Hash className="h-4 w-4 shrink-0 text-muted-foreground/70" />
+              {room.is_open ? (
+                <DoorOpen className="h-4 w-4 shrink-0 text-emerald-500" />
+              ) : (
+                <DoorClosed className="h-4 w-4 shrink-0 text-destructive/70" />
+              )}
               {!isCollapsed && (
                 <>
                   <span className="truncate flex-1 text-left">

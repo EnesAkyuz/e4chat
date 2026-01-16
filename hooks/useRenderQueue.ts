@@ -53,7 +53,7 @@ export function useRenderQueue(debug = false) {
         console.log(`🎬 RenderQueue: ${entry}`);
       }
     },
-    [debug]
+    [debug],
   );
 
   const processQueue = useCallback(async () => {
@@ -132,7 +132,7 @@ export function useRenderQueue(debug = false) {
       queueRef.current.push(event);
       processQueue();
     },
-    [log, processQueue]
+    [log, processQueue],
   );
 
   const enqueueUserMessage = useCallback(
@@ -150,7 +150,7 @@ export function useRenderQueue(debug = false) {
         enqueue("thinking_start", thinkingModelIds);
       }
     },
-    [enqueue, log]
+    [enqueue, log],
   );
 
   const enqueueAiMessage = useCallback(
@@ -162,7 +162,7 @@ export function useRenderQueue(debug = false) {
       // Then add the message
       enqueue("ai_message", message);
     },
-    [enqueue]
+    [enqueue],
   );
 
   const setInitialMessages = useCallback(
@@ -170,7 +170,7 @@ export function useRenderQueue(debug = false) {
       log(`📦 Setting initial messages (${messages.length} items)`);
       setState((prev) => ({ ...prev, messages }));
     },
-    [log]
+    [log],
   );
 
   const clearState = useCallback(() => {
@@ -189,7 +189,7 @@ export function useRenderQueue(debug = false) {
         messages: prev.messages.map((m) => (m.id === tempId ? realMessage : m)),
       }));
     },
-    [log]
+    [log],
   );
 
   return {
