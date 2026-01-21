@@ -6,6 +6,7 @@ import {
   Lock,
   LockOpen,
   RefreshCcw,
+  Reply,
   Send,
   ToggleLeft,
   ToggleRight,
@@ -43,6 +44,7 @@ interface Message {
   id: string;
   content: string;
   profile_id: string | null;
+  reply_to_id?: string | null;
   created_at: string;
   is_ai?: boolean;
   ai_model_id?: string;
@@ -69,6 +71,8 @@ interface Room {
   is_open: boolean;
   password?: string;
   created_at: string;
+  ai_tokens?: number;
+  ai_tokens_max?: number;
 }
 
 interface RoomModel {
@@ -101,6 +105,8 @@ export default function ChatRoom({
     setInitialMessages,
     clearState: clearQueue,
     resolveOptimisticMessage,
+    startThinking,
+    stopThinking,
   } = useRenderQueue(true); // Enable debug logging
 
   // Convert queued messages to full Message type for rendering
@@ -124,8 +130,33 @@ export default function ChatRoom({
   // Map content -> tempId for resolving optimistic updates
   const pendingOptimisticMessages = useRef<Map<string, string>>(new Map());
 
+  // AI Request Queue: modelId -> Array of pending payloads
+  // biome-ignore lint/suspicious/noExplicitAny: Payload type
+  const pendingAiRequests = useRef<Map<string, any[]>>(new Map());
+
   // Track if this is a fresh room with initial data to enqueue
   const initialDataEnqueued = useRef(false);
+
+  // Track messages since last AI response for unprompted participation
+  const [messagesSinceLastAi, setMessagesSinceLastAi] = useState(0);
+
+  // Synchronous Global Lock to prevent race conditions
+  const isGlobalBusyRef = useRef(false);
+
+  useEffect(() => {
+    // Sync ref with state for React reactivity, but use ref for logic
+    isGlobalBusyRef.current = thinkingModels.size > 0;
+  }, [thinkingModels]);
+
+  useEffect(() => {
+    // Recalculate whenever messages change
+    let count = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].is_ai) break;
+      count++;
+    }
+    setMessagesSinceLastAi(count);
+  }, [messages]);
 
   // Presence state
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
@@ -498,7 +529,47 @@ export default function ChatRoom({
                   profiles: fullMsg.profiles,
                   created_at: fullMsg.created_at,
                 });
-                // Notify parent if all thinking is done - handled by useEffect now
+
+                // Trigger AI-to-AI mentions
+                // We check if the AI mentioned anyone else
+                const mentions = getMentionedModelIds(fullMsg.content);
+                if (mentions.length > 0) {
+                  // We need to trigger the mentioned AIs
+                  // Crucial: Use DB for context to avoid stale state in this callback
+                  const triggerAi = async () => {
+                    // Fetch latest context from DB
+                    const { data: recentMessages } = await supabase
+                      .from("messages")
+                      .select("content, is_ai")
+                      .eq("room_id", roomId)
+                      .order("created_at", { ascending: false })
+                      .limit(10);
+
+                    if (!recentMessages) return;
+
+                    const contextMessages = recentMessages
+                      .reverse()
+                      .map((m) => ({
+                        role: m.is_ai ? "assistant" : "user",
+                        content: m.content,
+                      }));
+
+                    // Trigger each mentioned model
+                    await Promise.all(
+                      mentions.map(async (rm) => {
+                        // Prevent self-loops if AI somehow mentions itself
+                        if (rm.model_id === fullMsg.ai_model_id) return;
+
+                        await triggerAiRequest(rm.model_id, {
+                          messages: contextMessages,
+                          roomId: roomId,
+                          modelId: rm.model_id,
+                        });
+                      }),
+                    );
+                  };
+                  triggerAi();
+                }
               } else {
                 // User Message Logic
 
@@ -645,17 +716,186 @@ export default function ChatRoom({
     // We only want to process them on MOUNT/ROOM CHANGE, not when parent clears them.
   ]);
 
-  // Separate effect to handle thinking completion
+  // Process AI Request (Queue aware + Lazy Context)
+  // Process AI Request (Queue aware + Lazy Context)
+  const triggerAiRequest = useCallback(
+    async (modelId: string, payloadOrIntent: any) => {
+      // 1. Synchronous Global Check
+      if (isGlobalBusyRef.current) {
+        console.log(
+          `[Queue] Global Lock Busy. Queuing request for ${modelId}.`,
+        );
+
+        // DEDUPLICATION: "Cancel the first one, return the second one."
+        // We overwrite any existing queued item for this model.
+        const currentQueue = pendingAiRequests.current.get(modelId) || [];
+        if (currentQueue.length > 0) {
+          console.log(
+            `[Queue] Overwriting previous request for ${modelId} (deduplication).`,
+          );
+        }
+        // Set queue to ONLY contain this latest request (Last One Wins)
+        pendingAiRequests.current.set(modelId, [
+          { ...payloadOrIntent, _needsFreshContext: true },
+        ]);
+        return;
+      }
+
+      // 2. Lock immediately
+      isGlobalBusyRef.current = true; // Optimistic lock
+
+      try {
+        // Show thinking state immediately
+        startThinking(modelId);
+
+        let finalPayload = payloadOrIntent;
+
+        // Smart Queue: Refresh context if needed
+        // If we marked it as needing fresh context (queued item), fetch from DB.
+        if (payloadOrIntent._needsFreshContext) {
+          console.log(`[SmartQueue] Fetching fresh context for ${modelId}...`);
+          // Fetch latest 10 messages from DB to ensure we see interruptions
+          const { data: recentMessages } = await supabase
+            .from("messages")
+            .select("content, is_ai")
+            .eq("room_id", roomId)
+            .order("created_at", { ascending: false })
+            .limit(10);
+
+          if (recentMessages) {
+            const contextMessages = recentMessages.reverse().map((m) => ({
+              role: m.is_ai ? "assistant" : "user",
+              content: m.content,
+            }));
+
+            finalPayload = {
+              ...payloadOrIntent,
+              messages: contextMessages,
+            };
+            // Remove internal flag
+            delete finalPayload._needsFreshContext;
+          }
+        }
+
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          body: JSON.stringify(finalPayload),
+        });
+
+        // Log results for debugging
+        const data = await response
+          .clone()
+          .json()
+          .catch(() => ({}));
+        console.log(`[AI-Request] Sent to ${modelId}`, data);
+
+        if (!response.ok) {
+          // CRITICAL: Handle errors by stopping thinking
+          stopThinking(modelId);
+
+          if (response.status === 429) {
+            console.warn(`[AI-Request] Rate limited: ${modelId}`);
+          } else {
+            console.error(`[AI-Request] Failed: ${modelId} ${response.status}`);
+          }
+        }
+      } catch (err) {
+        console.error(`[AI-Request] Error calling ${modelId}`, err);
+        // Ensure we stop thinking on network error
+        stopThinking(modelId);
+      }
+      // Note: We do NOT unlock here. unlocking happens when 'thinking_end' event is processed
+      // via realtime/useRenderQueue effects.
+    },
+    [roomId, supabase, startThinking, stopThinking],
+  );
+
+  // Handle Auto-Reply (Unprompted Participation)
+  const handleAutoReply = useCallback(async () => {
+    // 1. Check if we should try to auto-reply
+    // Logic: Pick a random model that is NOT currently thinking
+    const availableModels = roomModelsRef.current.filter(
+      (rm) => !thinkingModels.has(rm.model_id),
+    );
+
+    console.log("[AutoReply Debug] Triggered.", {
+      roomModels: roomModelsRef.current.length,
+      availableModels: availableModels.length,
+      thinkingModels: thinkingModels.size,
+      messagesSinceLastAi,
+      roomId,
+    });
+
+    if (availableModels.length === 0) {
+      console.log("[AutoReply Debug] No available models.");
+      return;
+    }
+
+    // simplistic random selection
+    const randomModel =
+      availableModels[Math.floor(Math.random() * availableModels.length)];
+
+    // trigger API call with isAutoReply flag
+    const contextMessages = messages.slice(-10).map((m) => ({
+      role: m.is_ai ? "assistant" : "user",
+      content: m.content,
+    }));
+
+    await triggerAiRequest(randomModel.model_id, {
+      messages: contextMessages,
+      roomId: roomId,
+      modelId: randomModel.model_id,
+      isAutoReply: true,
+      messagesSinceLastAi: messagesSinceLastAi,
+    });
+  }, [messages, roomId, thinkingModels, messagesSinceLastAi, triggerAiRequest]);
+
+  // Separate effect to handle thinking completion AND Queue Processing
   const prevThinkingSize = useRef(thinkingModels.size);
+  const prevThinkingModels = useRef(new Set(thinkingModels));
+
   useEffect(() => {
-    // Only trigger if we went from >0 to 0
+    // Detect which models stopped thinking
+    if (prevThinkingSize.current > thinkingModels.size) {
+      // Find the diff
+      const stoppedModels = Array.from(prevThinkingModels.current).filter(
+        (m) => !thinkingModels.has(m),
+      );
+
+      stoppedModels.forEach((_modelId) => {
+        // No-op loop for per-model queue, we handle global queue below
+      });
+
+      // Global Queue Check
+      // If thinkingModels is EMPTY (room free), process NEXT item from ANY queue
+      if (thinkingModels.size === 0) {
+        console.log("[Queue] Room free. Checking for pending requests...");
+        isGlobalBusyRef.current = false; // Unlock
+
+        // Find first non-empty queue
+        // Priority: Just iterate order of keys for now
+        for (const [mId, queue] of pendingAiRequests.current.entries()) {
+          if (queue.length > 0) {
+            const nextRequest = queue.shift();
+            console.log(
+              `[Queue] Popped request for ${mId}. Executing with fresh context.`,
+            );
+            triggerAiRequest(mId, nextRequest); // This will re-lock
+            break; // Only one at a time
+          }
+        }
+      }
+    }
+
+    // Call deprecated callback if needed (legacy)
     if (prevThinkingSize.current > 0 && thinkingModels.size === 0) {
       if (onThinkingModelsConsumed) {
         onThinkingModelsConsumed();
       }
     }
     prevThinkingSize.current = thinkingModels.size;
-  }, [thinkingModels.size, onThinkingModelsConsumed]);
+    prevThinkingModels.current = new Set(thinkingModels);
+  }, [thinkingModels, onThinkingModelsConsumed, triggerAiRequest]);
 
   // check inside subscription removed since we use this effect now
 
@@ -746,12 +986,34 @@ export default function ChatRoom({
     };
   }, [roomId, currentUserId, currentUsername, supabase]);
 
+  // Reply State
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+
+  // Trigger auto-reply check after user messages
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg && !lastMsg.is_ai && !initialDataEnqueued.current) {
+      // Only trigger if NO mentions were present in the last message
+      // (If mentions were present, explicit AI logic would have run)
+      const mentions = getMentionedModelIds(lastMsg.content);
+      if (mentions.length === 0) {
+        // Small delay to let things settle and feel natural
+        const timer = setTimeout(() => {
+          handleAutoReply();
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [messages, handleAutoReply, getMentionedModelIds]);
+
   async function handleSendMessage(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!newMessage.trim()) return;
 
     const messageContent = newMessage; // capture for async use
     setNewMessage(""); // Clear input immediately
+    const currentReplyTo = replyingTo; // capture reply state
+    setReplyingTo(null); // Clear reply state
 
     // 0. Optimistic Render
     const tempId = `optimistic-${Date.now()}`;
@@ -772,7 +1034,8 @@ export default function ChatRoom({
           username: currentUsername || "You",
           avatar_url: currentUserAvatar || "",
         },
-      } as any, // Cast to any to avoid strict type mismatch with queue
+        reply_to_id: currentReplyTo?.id, // Add reply info
+      } as any,
       mentionedModelIds,
     );
 
@@ -786,6 +1049,7 @@ export default function ChatRoom({
       room_id: roomId,
       content: messageContent,
       profile_id: user?.id,
+      reply_to_id: currentReplyTo?.id,
     });
 
     // 2. Trigger AI logic if mentions exist
@@ -825,6 +1089,8 @@ export default function ChatRoom({
       );
     }
   }
+
+  // ... (toggleRoomStatus, generateInviteCode, copyCode implementation omitted for brevity as they are unchanged)
 
   async function toggleRoomStatus() {
     if (!roomDetails || !currentUserId) return;
@@ -913,12 +1179,21 @@ export default function ChatRoom({
               <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               {onlineUsers.size} online
             </span>
+            {/* Display AI Tokens (Debugging/Visibility) */}
+            {process.env.NODE_ENV === "development" && (
+              <>
+                <span>•</span>
+                <span className="text-xs font-mono opacity-50">
+                  Gap: {messagesSinceLastAi} | Tokens:{" "}
+                  {roomDetails.ai_tokens ?? "?"}/
+                  {roomDetails.ai_tokens_max ?? "?"}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Room Controls */}
-          {/* Room Controls - Set Password */}
           {/* Room Controls - Set Password */}
           {isOwner && (
             <>
@@ -1034,6 +1309,7 @@ export default function ChatRoom({
                       className="h-5 w-5 text-muted-foreground hover:text-foreground"
                       onClick={copyCode}
                       title="Copy Code"
+                      type="button"
                     >
                       {isCopied ? (
                         <Check className="h-3 w-3" />
@@ -1047,6 +1323,7 @@ export default function ChatRoom({
                       className="h-5 w-5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
                       onClick={generateInviteCode}
                       title="Regenerate Code"
+                      type="button"
                     >
                       <RefreshCcw className="h-3 w-3" />
                     </Button>
@@ -1075,89 +1352,195 @@ export default function ChatRoom({
         {/* Messages Area */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
-            <div className="flex flex-col gap-4">
-              {messages.map((msg) => {
-                const isAi = msg.is_ai;
-                const aiModel = isAi
-                  ? AVAILABLE_MODELS.find((m) => m.id === msg.ai_model_id)
-                  : null;
+            <div className="flex flex-col gap-1">
+              {messages
+                .filter((m) => m.content?.trim())
+                .map((msg, index, arr) => {
+                  const isAi = msg.is_ai;
+                  const aiModel = isAi
+                    ? AVAILABLE_MODELS.find((m) => m.id === msg.ai_model_id)
+                    : null;
 
-                return (
-                  <div
-                    key={msg.id}
-                    ref={() => {
-                      animatedMessagesRef.current.add(msg.id);
-                    }}
-                    className={cn(
-                      "flex gap-3 transition-opacity duration-500",
-                      !animatedMessagesRef.current.has(msg.id) &&
-                        "animate-in fade-in duration-500",
-                    )}
-                  >
-                    <Avatar
+                  // Consecutive Message Logic
+                  const prevMsg = arr[index - 1];
+                  const isConsecutive =
+                    prevMsg &&
+                    ((isAi &&
+                      prevMsg.is_ai &&
+                      prevMsg.ai_model_id === msg.ai_model_id) ||
+                      (!isAi &&
+                        !prevMsg.is_ai &&
+                        prevMsg.profile_id === msg.profile_id));
+
+                  // If time gap is large (>5 mins), don't group
+                  const timeGap = prevMsg
+                    ? new Date(msg.created_at).getTime() -
+                      new Date(prevMsg.created_at).getTime()
+                    : 0;
+                  const isGrouped = isConsecutive && timeGap < 5 * 60 * 1000;
+
+                  return (
+                    <div
+                      key={msg.id}
+                      id={`message-${msg.id}`}
+                      ref={() => {
+                        animatedMessagesRef.current.add(msg.id);
+                      }}
                       className={cn(
-                        "mt-1 h-8 w-8 border border-border",
-                        isAi && "ring-1 ring-primary/50",
+                        "flex gap-3 transition-opacity duration-500 group relative pr-10", // Added pr-10 for reply button space
+                        !animatedMessagesRef.current.has(msg.id) &&
+                          "animate-in fade-in duration-500",
+                        isGrouped ? "mt-0.5" : "mt-4",
                       )}
                     >
-                      {isAi ? (
-                        <>
-                          <AvatarImage
-                            src={getBotAvatarUrl(msg.ai_model_id || "bot")}
-                          />
-                          <AvatarFallback
-                            className={cn(
-                              "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
-                              aiModel?.color,
-                            )}
-                          >
-                            <Bot className="h-4 w-4 text-white" />
-                          </AvatarFallback>
-                        </>
+                      {!isGrouped ? (
+                        <Avatar
+                          className={cn(
+                            "mt-1 h-8 w-8 border border-border shrink-0",
+                            isAi && "ring-1 ring-primary/50",
+                          )}
+                        >
+                          {isAi ? (
+                            <>
+                              <AvatarImage
+                                src={getBotAvatarUrl(msg.ai_model_id || "bot")}
+                              />
+                              <AvatarFallback
+                                className={cn(
+                                  "flex h-full w-full items-center justify-center bg-secondary text-secondary-foreground",
+                                  aiModel?.color,
+                                )}
+                              >
+                                <Bot className="h-4 w-4 text-white" />
+                              </AvatarFallback>
+                            </>
+                          ) : (
+                            <>
+                              <AvatarImage src={msg.profiles?.avatar_url} />
+                              <AvatarFallback className="bg-secondary text-secondary-foreground text-xs">
+                                {msg.profiles?.username
+                                  ?.substring(0, 2)
+                                  .toUpperCase()}
+                              </AvatarFallback>
+                            </>
+                          )}
+                        </Avatar>
                       ) : (
-                        <>
-                          <AvatarImage src={msg.profiles?.avatar_url} />
-                          <AvatarFallback className="bg-secondary text-secondary-foreground text-xs">
-                            {msg.profiles?.username
-                              ?.substring(0, 2)
-                              .toUpperCase()}
-                          </AvatarFallback>
-                        </>
+                        <div className="w-8 shrink-0" /> // Spacer for grouped messages
                       )}
-                    </Avatar>
-                    <div className="flex flex-col gap-1 max-w-[80%]">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-foreground">
-                          {isAi
-                            ? aiModel?.name || "AI Assistant"
-                            : msg.profiles?.username}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                          {new Date(msg.created_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                        {isAi && (
-                          <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
-                            AI
-                          </span>
+
+                      <div className="flex flex-col gap-1 max-w-[80%]">
+                        {!isGrouped && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">
+                              {isAi
+                                ? aiModel?.name || "AI Assistant"
+                                : msg.profiles?.username}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(msg.created_at).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            {isAi && (
+                              <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
+                                AI
+                              </span>
+                            )}
+                          </div>
                         )}
+
+                        {/* Quoted Message (Reply Preview) - Only show if current message is a reply */}
+                        {msg.reply_to_id &&
+                          (() => {
+                            const parentMsg = messages.find(
+                              (m) => m.id === msg.reply_to_id,
+                            );
+                            if (!parentMsg) return null;
+                            const parentIsAi = parentMsg.is_ai;
+                            const parentName = parentIsAi
+                              ? AVAILABLE_MODELS.find(
+                                  (m) => m.id === parentMsg.ai_model_id,
+                                )?.name || "AI"
+                              : parentMsg.profiles?.username || "User";
+
+                            return (
+                              // biome-ignore lint/a11y/useSemanticElements: Content may contain interactive elements like links
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                className={cn(
+                                  "relative mt-1 mb-2 rounded-md border-l-2 pl-3 py-1.5 text-xs opacity-90 transition-colors hover:bg-black/5 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                  isAi
+                                    ? "border-primary/40 bg-primary/5 text-foreground/80"
+                                    : "border-primary/40 bg-secondary/50 text-secondary-foreground/80",
+                                )}
+                                onClick={() => {
+                                  const el = document.getElementById(
+                                    `message-${parentMsg.id}`,
+                                  );
+                                  if (el)
+                                    el.scrollIntoView({
+                                      behavior: "smooth",
+                                      block: "center",
+                                    });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    const el = document.getElementById(
+                                      `message-${parentMsg.id}`,
+                                    );
+                                    if (el)
+                                      el.scrollIntoView({
+                                        behavior: "smooth",
+                                        block: "center",
+                                      });
+                                  }
+                                }}
+                              >
+                                <div className="absolute left-0 top-0 bottom-0 w-[2px] rounded-l-md bg-primary/40" />
+                                <div className="flex items-center gap-1 mb-0.5 text-[10px] font-semibold opacity-70">
+                                  <Reply className="h-3 w-3" />
+                                  {parentName}
+                                </div>
+                                <div className="line-clamp-2">
+                                  <MarkdownContent
+                                    content={parentMsg.content}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                        {/* Main Message Content */}
+                        <div
+                          className={cn(
+                            "rounded-lg px-4 py-2 text-sm border relative",
+                            isAi
+                              ? "bg-primary/5 border-primary/20 text-foreground"
+                              : "bg-secondary text-secondary-foreground border-border",
+                            isGrouped && "rounded-tl-sm", // Visual tweak for grouping
+                          )}
+                        >
+                          <MarkdownContent content={msg.content} />
+                        </div>
                       </div>
-                      <div
-                        className={cn(
-                          "rounded-lg px-4 py-2 text-sm border",
-                          isAi
-                            ? "bg-primary/5 border-primary/20 text-foreground"
-                            : "bg-secondary text-secondary-foreground border-border",
-                        )}
+
+                      {/* Reply Action */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+                        onClick={() => setReplyingTo(msg as any)}
+                        title="Reply"
                       >
-                        <MarkdownContent content={msg.content} />
-                      </div>
+                        <Reply className="h-4 w-4" />
+                      </Button>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
 
               {thinkingModels.size > 0 &&
                 Array.from(thinkingModels).map((modelId) => {
@@ -1166,7 +1549,7 @@ export default function ChatRoom({
                   return (
                     <div
                       key={modelId}
-                      className="flex gap-3 animate-in fade-in duration-300"
+                      className="flex gap-3 animate-in fade-in duration-300 mt-4"
                     >
                       <Avatar
                         className={cn("mt-1 h-8 w-8 ring-1 ring-primary/50")}
@@ -1205,7 +1588,7 @@ export default function ChatRoom({
 
               {/* Typing indicator */}
               {typingUsers.length > 0 && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in mt-2 ml-12">
                   <div className="flex gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
                     <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
@@ -1223,7 +1606,33 @@ export default function ChatRoom({
           </div>
 
           {/* Input Area */}
-          <div className="p-4 border-t border-border bg-background relative">
+          <div className="p-4 border-t border-border bg-background relative flex flex-col gap-2">
+            {/* Replying Banner */}
+            {replyingTo && (
+              <div className="flex items-center justify-between mx-4 mb-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2 shadow-sm animate-in slide-in-from-bottom-2 fade-in">
+                <div className="flex flex-col gap-0.5 truncate pr-8">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-primary flex items-center gap-1">
+                    <div className="h-3 w-3 -scale-x-100">➥</div>
+                    Replying to{" "}
+                    {replyingTo.profiles?.username ||
+                      (replyingTo.is_ai ? "AI" : "User")}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground font-medium">
+                    {replyingTo.content}
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 rounded-full hover:bg-primary/10 text-muted-foreground hover:text-primary shrink-0"
+                  onClick={() => setReplyingTo(null)}
+                >
+                  <span className="sr-only">Close</span>
+                  <div className="h-3 w-3">✕</div>
+                </Button>
+              </div>
+            )}
+
             {/* Mention Suggestions */}
             {mentionQuery !== null && filteredModels.length > 0 && (
               <div className="absolute bottom-full left-4 mb-2 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-md animate-in fade-in slide-in-from-bottom-2">

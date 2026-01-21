@@ -2,7 +2,7 @@
 export interface AIModel {
   id: string;
   name: string;
-  provider: "openai" | "anthropic" | "google";
+  provider: "openai" | "google";
   description: string;
   avatar_url?: string;
   color: string; // Tailored color for UI
@@ -31,13 +31,6 @@ export const AVAILABLE_MODELS: AIModel[] = [
     color: "bg-blue-600",
   },
   // Placeholders for future providers
-  {
-    id: "claude-3-5-sonnet",
-    name: "Claude 3.5 Sonnet",
-    provider: "anthropic",
-    description: "Anthropic's intelligent and fast model. (Requires Key)",
-    color: "bg-orange-500",
-  },
   {
     id: "gemini-2.5-flash",
     name: "Gemini 2.5 Flash",

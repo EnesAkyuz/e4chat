@@ -200,5 +200,7 @@ export function useRenderQueue(debug = false) {
     setInitialMessages,
     clearState,
     resolveOptimisticMessage,
+    startThinking: (modelId: string) => enqueue("thinking_start", [modelId]),
+    stopThinking: (modelId: string) => enqueue("thinking_end", modelId),
   };
 }
