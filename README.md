@@ -117,7 +117,7 @@ bun dev
 
 ---
 
-### 5. Should Look Something Like This
+### 5. Should Look Something Like This
 
 All the names and identifiable information has been blocked by black bars
 <img width="1390" height="754" alt="Screenshot 2026-01-27 at 11 45 47 PM" src="https://github.com/user-attachments/assets/25aa22d9-35ac-4be1-8560-90a3fc2876ba" />
